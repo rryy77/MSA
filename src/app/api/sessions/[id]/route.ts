@@ -20,6 +20,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { getSession } from "@/lib/store";
 import type { Session } from "@/lib/types";
+import { fireAndForgetLineMessagingForUser } from "@/lib/lineMessagingPush";
 import { fireAndForgetPush } from "@/lib/webPushServer";
 
 type PatchBody =
@@ -158,6 +159,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
             sessionId: sessionP.id,
             participantSlots: pickedSlots,
           });
+          if (sessionP.organizerUserId) {
+            fireAndForgetLineMessagingForUser(
+              sessionP.organizerUserId,
+              `MSA\n参加者が日程候補を返信しました。メールをご確認ください。\n${sessionUrl}`,
+            );
+          }
         }
       } catch (e) {
         console.error("organizer_reply_email", e);
@@ -222,6 +229,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
             sessionId: sessionP.id,
             participantSlots: pickedSlots,
           });
+          if (sessionP.organizerUserId) {
+            fireAndForgetLineMessagingForUser(
+              sessionP.organizerUserId,
+              `MSA\n参加者が日程候補を返信しました。メールをご確認ください。\n${sessionUrl}`,
+            );
+          }
         }
       } catch (e) {
         console.error("organizer_reply_email", e);
@@ -377,6 +390,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         });
         inviteEmailSent = true;
         session.inviteEmailSentAt = new Date().toISOString();
+        fireAndForgetLineMessagingForUser(
+          profile.id,
+          `MSA\n日程調整の案内メールを送信しました。\n${respondUrl}`,
+        );
       } catch (e) {
         console.error("invite_email_optional", e);
       }
@@ -487,6 +504,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           });
           inviteEmailSent = true;
           session.inviteEmailSentAt = new Date().toISOString();
+          fireAndForgetLineMessagingForUser(
+            participantUserId,
+            `MSA\n日程調整の案内メールを送信しました。\n${inviteUrl}`,
+          );
         } catch (e) {
           console.error("invite_email_optional", e);
         }

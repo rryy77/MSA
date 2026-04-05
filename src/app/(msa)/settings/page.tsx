@@ -24,6 +24,14 @@ export default function SettingsPage() {
   const [calMsg, setCalMsg] = useState<string | null>(null);
   /** null = モーダルなし。0 になったら即リダイレクト */
   const [autoOAuthCountdown, setAutoOAuthCountdown] = useState<number | null>(null);
+  const [lineLoading, setLineLoading] = useState(true);
+  const [lineStatus, setLineStatus] = useState<{
+    connected: boolean;
+    loginConfigured: boolean;
+    pushConfigured: boolean;
+    loggedIn: boolean;
+  } | null>(null);
+  const [lineMsg, setLineMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -34,6 +42,23 @@ export default function SettingsPage() {
         /* ignore */
       }
     }
+    const line = params.get("line");
+    const lineReason = params.get("reason");
+    if (line === "connected") {
+      setLineMsg("LINE と連携しました。メール送信時に同じ趣旨の通知が届きます（公式アカウントを友だち追加済みである必要があります）。");
+    } else if (line === "error") {
+      setLineMsg(
+        lineReason === "line_channel_not_configured"
+          ? "サーバーに LINE Developers のチャネル ID / シークレットが未設定です。環境変数を確認してください。"
+          : lineReason === "state_mismatch"
+            ? "セッションの検証に失敗しました。もう一度「LINE と連携」から試してください。"
+            : "LINE 連携に失敗しました。もう一度お試しください。",
+      );
+    }
+    if (line) {
+      router.replace("/settings", { scroll: false });
+    }
+
     const cal = params.get("calendar");
     oauthCallbackRef.current = cal;
     if (cal === "connected") {
@@ -85,6 +110,45 @@ export default function SettingsPage() {
       })
       .finally(() => {
         if (!cancelled) setCalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/line/status")
+      .then((r) => r.json())
+      .then(
+        (j: {
+          connected?: boolean;
+          loginConfigured?: boolean;
+          pushConfigured?: boolean;
+          loggedIn?: boolean;
+        }) => {
+          if (!cancelled && typeof j.loginConfigured === "boolean") {
+            setLineStatus({
+              connected: Boolean(j.connected),
+              loginConfigured: Boolean(j.loginConfigured),
+              pushConfigured: Boolean(j.pushConfigured),
+              loggedIn: j.loggedIn !== false,
+            });
+          }
+        },
+      )
+      .catch(() => {
+        if (!cancelled) {
+          setLineStatus({
+            connected: false,
+            loginConfigured: false,
+            pushConfigured: false,
+            loggedIn: false,
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLineLoading(false);
       });
     return () => {
       cancelled = true;
@@ -155,6 +219,31 @@ export default function SettingsPage() {
       setCalMsg("Google カレンダーとの連携を解除しました。");
     } catch {
       setCalMsg("連携の解除に失敗しました。もう一度お試しください。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function startLineOAuth() {
+    window.location.href = "/api/line/oauth";
+  }
+
+  async function disconnectLine() {
+    setLineMsg(null);
+    setPending(true);
+    try {
+      const res = await fetch("/api/profile/line", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disconnect: true }),
+      });
+      if (!res.ok) throw new Error("failed");
+      setLineStatus((s) =>
+        s ? { ...s, connected: false } : null,
+      );
+      setLineMsg("LINE 連携を解除しました。");
+    } catch {
+      setLineMsg("解除に失敗しました。");
     } finally {
       setPending(false);
     }
@@ -234,8 +323,29 @@ export default function SettingsPage() {
           {calLoading ? (
             <p className="mt-2 text-xs text-zinc-500">読み込み中…</p>
           ) : !calStatus?.oauthConfigured ? (
-            <p className="mt-2 text-xs text-amber-200/90">
-              この環境では Google OAuth（GOOGLE_OAUTH_CLIENT_ID 等）が未設定のため、連携できません。
+            <p className="mt-2 text-xs leading-relaxed text-amber-200/90">
+              このサーバーでは Google カレンダー用の OAuth が未設定です。Vercel の場合は Project →
+              Settings → Environment Variables の Production に{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-amber-100/95">
+                GOOGLE_OAUTH_CLIENT_ID
+              </code>{" "}
+              と{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-amber-100/95">
+                GOOGLE_OAUTH_CLIENT_SECRET
+              </code>{" "}
+              を追加し、Google Cloud Console の「承認済みリダイレクト URI」と同じ URL になるよう{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-amber-100/95">
+                GOOGLE_CALENDAR_REDIRECT_URI
+              </code>{" "}
+              （または{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-amber-100/95">
+                NEXT_PUBLIC_APP_URL
+              </code>
+              ）を揃えて再デプロイしてください。詳細はリポジトリの{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-amber-100/95">
+                .env.example
+              </code>{" "}
+              を参照してください。
             </p>
           ) : !calStatus.loggedIn ? (
             <p className="mt-2 text-xs text-zinc-400">
@@ -274,6 +384,78 @@ export default function SettingsPage() {
               >
                 カレンダーと連携する（手動）
               </button>
+            </div>
+          )}
+        </li>
+        <li className="border-b border-zinc-800 px-4 py-4">
+          <p className="text-sm font-medium">LINE 通知（メールと同タイミング）</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            <strong className="text-zinc-400">LINE Developers</strong> の Messaging API で、MSA
+            からメールを送った直後に同じ趣旨のテキストを LINE にも送ります（アプリ内通知・プッシュとは別）。
+          </p>
+          <p className="mt-2 text-xs text-zinc-500">
+            連携後は、公式アカウントを<strong className="text-zinc-400">友だち追加</strong>
+            している必要があります（未追加だと push が届きません）。
+          </p>
+          {lineMsg && (
+            <p className="mt-2 text-xs text-teal-100/90">{lineMsg}</p>
+          )}
+          {lineLoading ? (
+            <p className="mt-2 text-xs text-zinc-500">読み込み中…</p>
+          ) : !lineStatus?.loginConfigured ? (
+            <p className="mt-2 text-xs text-amber-200/90">
+              サーバーに{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">LINE_CHANNEL_ID</code>{" "}
+              と{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">LINE_CHANNEL_SECRET</code>{" "}
+              が未設定です。LINE Developers のチャネル（LINE Login 有効）を用意し、環境変数とコールバック URL
+              を設定してください（.env.example 参照）。
+            </p>
+          ) : !lineStatus.loggedIn ? (
+            <p className="mt-2 text-xs text-zinc-400">
+              <Link
+                href="/login?next=%2Fsettings"
+                className="font-medium text-teal-400 underline hover:text-teal-300"
+              >
+                ログイン
+              </Link>
+              してから連携してください。
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {!lineStatus.pushConfigured && (
+                <p className="text-xs text-amber-200/90">
+                  <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">
+                    LINE_CHANNEL_ACCESS_TOKEN
+                  </code>{" "}
+                  が未設定のため、push は送信されません。Messaging API のチャネルアクセストークンを Vercel
+                  等に設定してください。
+                </p>
+              )}
+              {lineStatus.connected ? (
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-lg border border-teal-700/50 bg-teal-950/40 px-3 py-1.5 text-xs font-medium text-teal-200">
+                    LINE と連携済み
+                  </span>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => void disconnectLine()}
+                    className="rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+                  >
+                    連携を解除
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => startLineOAuth()}
+                  className="inline-flex rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
+                >
+                  LINE と連携する
+                </button>
+              )}
             </div>
           )}
         </li>

@@ -73,6 +73,37 @@ export async function fetchGoogleCalendarRefreshToken(
   return typeof t === "string" && t.length > 0 ? t : null;
 }
 
+function isMissingLineMessagingUserIdColumn(error: { message?: string }): boolean {
+  const m = error.message ?? "";
+  return (
+    m.includes("line_messaging_user_id") &&
+    (m.includes("does not exist") || m.includes("schema cache"))
+  );
+}
+
+/** LINE Messaging API の送信先 userId（LINE Login で保存） */
+export async function fetchLineMessagingUserId(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("line_messaging_user_id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingLineMessagingUserIdColumn(error)) {
+      console.warn(
+        "[MSA] profiles.line_messaging_user_id がありません。Supabase で supabase/migrations/008_profiles_line_messaging_user_id.sql を実行してください。",
+      );
+      return null;
+    }
+    throw new Error(`profiles: ${error.message}`);
+  }
+  const t = data?.line_messaging_user_id;
+  return typeof t === "string" && t.length > 0 ? t : null;
+}
+
 export async function updateGoogleCalendarRefreshToken(
   supabase: SupabaseClient,
   userId: string,
