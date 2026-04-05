@@ -99,10 +99,24 @@ function LoginForm() {
         callbackUrl &&
         !redirecting &&
         sessionChecked && (
-        <div className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 ring-1 ring-zinc-800 [&_.supabase-auth-ui_ui-message]:text-sm">
+        <div className="msa-auth-ui rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 ring-1 ring-zinc-800 [&_.supabase-auth-ui_ui-message]:text-sm">
           <Auth
             supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa }}
+            appearance={{
+              theme: ThemeSupa,
+              variables: {
+                default: {
+                  colors: {
+                    brand: "#0d9488",
+                    brandAccent: "#14b8a6",
+                    inputBackground: "#27272a",
+                    inputText: "#fafafa",
+                    inputPlaceholder: "#a1a1aa",
+                    inputBorder: "#52525b",
+                  },
+                },
+              },
+            }}
             theme="default"
             providers={oauthProviders}
             redirectTo={callbackUrl}

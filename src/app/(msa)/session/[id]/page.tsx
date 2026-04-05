@@ -332,17 +332,18 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       {needsBuild && (
         <div className="flex flex-col gap-4">
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="text-sm font-semibold">1. 日付を選ぶ</h2>
-            <p className="mt-1 text-xs text-zinc-500">参加できる日を複数選べます。</p>
+          <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
+            <h2 className="text-sm font-semibold text-zinc-100">1. 日付を選ぶ</h2>
+            <p className="mt-1 text-xs text-zinc-400">参加できる日を複数選べます。</p>
             <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">
               {candidateDates.map((ymd) => (
                 <li key={ymd}>
-                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-600 bg-zinc-950/80 px-3 py-2 text-zinc-100">
                     <input
                       type="checkbox"
                       checked={pickedDates.has(ymd)}
                       onChange={() => toggleDate(ymd)}
+                      className="accent-teal-600"
                     />
                     <span className="text-sm">{ymd}</span>
                   </label>
@@ -351,27 +352,27 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </ul>
           </section>
 
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="text-sm font-semibold">2. 時間帯（開始 — 終了）</h2>
-            <p className="mt-1 text-xs text-zinc-500">選んだ日に同じ時間帯を適用します（JST）。</p>
+          <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
+            <h2 className="text-sm font-semibold text-zinc-100">2. 時間帯（開始 — 終了）</h2>
+            <p className="mt-1 text-xs text-zinc-400">選んだ日に同じ時間帯を適用します（JST）。</p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+              <label className="flex flex-col gap-1 text-xs text-zinc-400">
                 開始
                 <input
                   type="time"
                   value={timeStart}
                   onChange={(e) => setTimeStart(e.target.value)}
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                  className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
                 />
               </label>
-              <span className="pt-5 text-zinc-400">—</span>
-              <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="pt-5 text-zinc-500">—</span>
+              <label className="flex flex-col gap-1 text-xs text-zinc-400">
                 終了
                 <input
                   type="time"
                   value={timeEnd}
                   onChange={(e) => setTimeEnd(e.target.value)}
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                  className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
                 />
               </label>
             </div>
@@ -395,13 +396,13 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       )}
 
       {session.status === "awaiting_organizer_round1" && session.slots.length > 0 && (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-sm font-semibold">参加者に日程候補を送る</h2>
-          <p className="mt-1 text-xs text-zinc-500">
+        <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-100">参加者に日程候補を送る</h2>
+          <p className="mt-1 text-xs text-zinc-400">
             アプリに登録している相手のメールアドレスを入力してください。メッセージに通知が届き、相手は行ける枠にチェックを付けて返信します。
           </p>
           <label className="mt-3 flex flex-col gap-1.5 text-sm">
-            <span className="text-zinc-600 dark:text-zinc-400">参加者のメール</span>
+            <span className="text-zinc-300">参加者のメール</span>
             <input
               type="email"
               autoComplete="email"
@@ -409,7 +410,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
               placeholder="example@gmail.com"
-              className="rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2.5 text-zinc-100 placeholder:text-zinc-500"
             />
             <datalist id="msa-invite-email-history">
               {inviteEmailSuggestions.map((e) => (
@@ -447,13 +448,13 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       )}
 
       {session.status === "awaiting_organizer_confirm" && (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-sm font-semibold">最終調整（参加者・主催者）</h2>
-          <p className="mt-1 text-xs text-zinc-500">
+        <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-100">最終調整（参加者・主催者）</h2>
+          <p className="mt-1 text-xs text-zinc-400">
             参加者が選んだ枠と、主催者の都合が両方つく枠だけが確定します。主催者の列にチェックを入れて調整してください。
           </p>
           {roundSlots.length === 0 ? (
-            <p className="mt-2 text-sm text-zinc-500">候補がありません。</p>
+            <p className="mt-2 text-sm text-zinc-300">候補がありません。</p>
           ) : (
             <>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -462,14 +463,14 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                   onClick={() =>
                     setOrganizerSelected(new Set(session.organizerRound1Ids ?? []))
                   }
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
                 >
                   全選択
                 </button>
                 <button
                   type="button"
                   onClick={() => setOrganizerSelected(new Set())}
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
                 >
                   全解除
                 </button>
@@ -480,22 +481,22 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                       new Set(session.participantPreferredSlotIds ?? []),
                     )
                   }
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
                 >
                   参加者の候補のみ選択
                 </button>
               </div>
-              <div className="mt-3 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+              <div className="mt-3 overflow-x-auto rounded-xl border border-zinc-600">
                 <table className="w-full min-w-[320px] border-collapse text-left text-sm">
                   <thead>
-                    <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/80">
-                      <th className="px-3 py-2 font-semibold text-zinc-700 dark:text-zinc-200">
+                    <tr className="border-b border-zinc-600 bg-zinc-800/90">
+                      <th className="px-3 py-2 font-semibold text-zinc-100">
                         候補
                       </th>
-                      <th className="w-24 px-2 py-2 text-center font-semibold text-zinc-700 dark:text-zinc-200">
+                      <th className="w-24 px-2 py-2 text-center font-semibold text-zinc-100">
                         参加者
                       </th>
-                      <th className="w-28 px-2 py-2 text-center font-semibold text-zinc-700 dark:text-zinc-200">
+                      <th className="w-28 px-2 py-2 text-center font-semibold text-zinc-100">
                         主催者
                       </th>
                     </tr>
@@ -507,9 +508,9 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                       return (
                         <tr
                           key={s.id}
-                          className="border-b border-zinc-100 last:border-0 dark:border-zinc-800"
+                          className="border-b border-zinc-700 bg-zinc-950/40 last:border-0"
                         >
-                          <td className="px-3 py-2.5 text-zinc-800 dark:text-zinc-200">
+                          <td className="px-3 py-2.5 text-zinc-100">
                             {s.label}
                           </td>
                           <td className="px-2 py-2.5 text-center">
@@ -536,9 +537,9 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                   </tbody>
                 </table>
               </div>
-              <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+              <p className="mt-3 text-xs text-zinc-400">
                 確定に含まれる枠（両方チェック）:{" "}
-                <span className="font-semibold text-teal-700 dark:text-teal-400">
+                <span className="font-semibold text-teal-400">
                   {overlapCount}
                 </span>{" "}
                 件
@@ -563,14 +564,14 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       )}
 
       {session.status === "completed" && (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-sm font-semibold">確定済み</h2>
+        <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-100">確定済み</h2>
           {session.participantEmail && (
-            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">参加者: {session.participantEmail}</p>
+            <p className="mt-1 text-xs text-zinc-300">参加者: {session.participantEmail}</p>
           )}
           {session.calendarCreated ? (
             <>
-              <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+              <p className="mt-2 text-xs text-zinc-300">
                 主催者の Google カレンダーに予定を追加しました。
               </p>
               {(session.calendarMeetLinks ?? []).filter(Boolean).length > 0 && (
@@ -583,7 +584,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                           href={link}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="break-all text-teal-700 underline hover:text-teal-600 dark:text-teal-400"
+                          className="break-all text-teal-400 underline hover:text-teal-300"
                         >
                           {link}
                         </a>
@@ -593,11 +594,11 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
               )}
             </>
           ) : (
-            <p className="mt-2 text-xs text-zinc-500">
+            <p className="mt-2 text-xs text-zinc-400">
               Google カレンダーには自動追加されていません。{" "}
               <Link
                 href="/settings?auto_calendar=1"
-                className="font-medium text-teal-700 underline hover:text-teal-600 dark:text-teal-400"
+                className="font-medium text-teal-400 underline hover:text-teal-300"
               >
                 設定を開く
               </Link>

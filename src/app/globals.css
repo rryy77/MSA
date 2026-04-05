@@ -17,3 +17,21 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Supabase Auth UI: ダーク背景でも入力文字が読めるようにする */
+.msa-auth-ui input[type="email"],
+.msa-auth-ui input[type="password"],
+.msa-auth-ui input[type="text"],
+.msa-auth-ui .supabase-auth-ui_ui-input,
+.msa-auth-ui [class*="auth-ui"] input {
+  color: #fafafa !important;
+  background-color: #27272a !important;
+  border-color: #52525b !important;
+}
+.msa-auth-ui input::placeholder {
+  color: #a1a1aa !important;
+}
+.msa-auth-ui label,
+.msa-auth-ui .supabase-auth-ui_ui-label {
+  color: #d4d4d8 !important;
+}
