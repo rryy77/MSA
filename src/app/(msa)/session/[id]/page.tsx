@@ -27,7 +27,9 @@ type Session = {
   inviteEmailSentAt?: string;
   scheduleInviteSentAt?: string;
   inviteEmailSent?: string;
+  calendarCreated?: boolean;
   createdEventIds: string[];
+  calendarMeetLinks?: string[];
 };
 
 export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +44,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [inviteEmailSuggestions, setInviteEmailSuggestions] = useState<string[]>([]);
   /** 外部メール未送信時の注意（アプリ内通知は成功している場合あり） */
   const [mailNotice, setMailNotice] = useState<string | null>(null);
+  /** 確定は成功したがカレンダー未連携・API 失敗など */
+  const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
   /** 主催者が「都合が付く」とチェックした枠（確定時に参加者候補との積集合になる） */
   const [organizerSelected, setOrganizerSelected] = useState<Set<string>>(new Set());
   const organizerInitRef = useRef<string | null>(null);
@@ -117,6 +121,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     setPending(true);
     setError(null);
     setMailNotice(null);
+    setCalendarNotice(null);
     try {
       const res = await fetch(`/api/sessions/${id}`, {
         method: "PATCH",
@@ -128,6 +133,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         message?: string;
         session?: Session;
         inviteEmailSent?: boolean;
+        calendarWarning?: string;
       };
       if (!res.ok) {
         const code = j.error;
@@ -152,6 +158,22 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       if (action === "send_schedule_invite" && j.inviteEmailSent === false) {
         setMailNotice(
           "外部メールは届いていません（送信未設定・エラー・または宛先制限の可能性）。アプリ内通知は届いていることがあります。Resend/SMTP と迷惑メールを確認してください。",
+        );
+      }
+      if (
+        j.calendarWarning === "google_calendar_not_connected" ||
+        j.calendarWarning === "no_slots"
+      ) {
+        setCalendarNotice(
+          "日程は確定しました。Google カレンダーへの追加はスキップされました（設定でカレンダーと連携すると、次回から Meet 付きで追加できます）。",
+        );
+      } else if (j.calendarWarning === "google_calendar_refresh_invalid") {
+        setCalendarNotice(
+          "日程は確定しましたが、保存されている Google 連携が無効です。設定で一度「連携を解除」してから、もう一度カレンダーと連携し直してください（本番とローカルで別アプリのときは環境ごとに連携が必要です）。",
+        );
+      } else if (j.calendarWarning === "google_calendar_api_error") {
+        setCalendarNotice(
+          "日程は確定しましたが、Google カレンダーへの追加に失敗しました。Google Cloud で Calendar API が有効か、サーバーのログを確認するか、手動で予定を作成してください。",
         );
       }
       return true;
@@ -237,6 +259,17 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       {mailNotice && (
         <p className="rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-100/95">
           {mailNotice}
+        </p>
+      )}
+      {calendarNotice && (
+        <p className="rounded-lg border border-zinc-600/50 bg-zinc-800/50 px-3 py-2 text-xs leading-relaxed text-zinc-200">
+          {calendarNotice}{" "}
+          <Link
+            href="/settings?auto_calendar=1"
+            className="font-medium text-teal-600 underline hover:text-teal-500 dark:text-teal-400"
+          >
+            設定を開いて連携する
+          </Link>
         </p>
       )}
 
@@ -478,14 +511,47 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           {session.participantEmail && (
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">参加者: {session.participantEmail}</p>
           )}
-          <p className="mt-2 text-xs text-zinc-500">
-            Google カレンダーへの自動追加は今後実装予定です。
-          </p>
-          <ul className="mt-2 list-inside list-disc text-xs text-zinc-600">
-            {session.createdEventIds.map((e) => (
-              <li key={e}>{e}</li>
-            ))}
-          </ul>
+          {session.calendarCreated ? (
+            <>
+              <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                主催者の Google カレンダーに予定を追加しました。
+              </p>
+              {(session.calendarMeetLinks ?? []).filter(Boolean).length > 0 && (
+                <ul className="mt-3 space-y-2 text-xs">
+                  {(session.calendarMeetLinks ?? [])
+                    .filter(Boolean)
+                    .map((link, i) => (
+                      <li key={`${link}-${i}`}>
+                        <a
+                          href={link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-teal-700 underline hover:text-teal-600 dark:text-teal-400"
+                        >
+                          {link}
+                        </a>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-zinc-500">
+              Google カレンダーには自動追加されていません。{" "}
+              <Link
+                href="/settings?auto_calendar=1"
+                className="font-medium text-teal-700 underline hover:text-teal-600 dark:text-teal-400"
+              >
+                設定を開く
+              </Link>
+              と、画面の案内に従って Google の許可へ進めます（次回の確定から Meet 付きで追加できます）。
+            </p>
+          )}
+          {session.createdEventIds.length > 0 && (
+            <p className="mt-3 text-[11px] text-zinc-500">
+              カレンダーイベント ID: {session.createdEventIds.join(", ")}
+            </p>
+          )}
         </section>
       )}
     </div>

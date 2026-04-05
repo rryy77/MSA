@@ -31,6 +31,8 @@ export type Session = {
   organizerPreferredSlotIds?: string[];
   calendarCreated: boolean;
   createdEventIds: string[];
+  /** Google カレンダー作成時の Meet リンク（createdEventIds と同じ順） */
+  calendarMeetLinks?: string[];
   finalizedAt?: string;
   /** 日程案内を送信した日時 */
   emailSentAt?: string;

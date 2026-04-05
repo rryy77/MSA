@@ -7,6 +7,7 @@ import {
   sendOrganizerParticipantRepliedEmail,
   sendParticipantInviteEmail,
 } from "@/lib/mailer";
+import { applyGoogleCalendarToSession } from "@/lib/googleCalendarFinalize";
 import {
   fetchProfileByEmail,
   fetchProfileEmail,
@@ -345,8 +346,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.organizerRound1Ids = all;
     session.participantIds = all;
     session.organizerFinalIds = all;
-    session.calendarCreated = true;
-    session.createdEventIds = all.map((sid, i) => `mock_evt_${session.id}_${i}_${sid}`);
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
     session.emailSentAt = new Date().toISOString();
@@ -354,17 +353,29 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       session.participantUserId = participantUserId;
     }
 
+    let recipientEmail: string | undefined;
+    if (participantUserId) {
+      recipientEmail =
+        (await fetchProfileEmail(supabase, participantUserId)) ?? undefined;
+      if (!recipientEmail) {
+        return NextResponse.json({ error: "profile_not_found" }, { status: 400 });
+      }
+      session.participantEmail = recipientEmail;
+    }
+
+    const { calendarWarning } = await applyGoogleCalendarToSession(
+      supabase,
+      user.id,
+      session,
+      all,
+    );
+
     const base = getAppBaseUrl();
     const inviteUrl = `${base}/p/${encodeURIComponent(session.participantToken)}`;
 
     let inviteEmailSent = false;
 
-    if (participantUserId) {
-      const recipientEmail = await fetchProfileEmail(supabase, participantUserId);
-      if (!recipientEmail) {
-        return NextResponse.json({ error: "profile_not_found" }, { status: 400 });
-      }
-
+    if (participantUserId && recipientEmail) {
       const payload = buildParticipantInvitePayload(inviteUrl, {
         sessionId: session.id,
         slots: session.slots,
@@ -412,7 +423,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     await putSession(session);
-    return NextResponse.json({ session, inviteEmailSent });
+    return NextResponse.json({
+      session,
+      inviteEmailSent,
+      ...(calendarWarning ? { calendarWarning } : {}),
+    });
   }
 
   const validIds = slotIdSet(session);
@@ -448,12 +463,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (!allowed.has(sid)) return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
     }
     session.organizerFinalIds = body.slotIds;
-    session.calendarCreated = true;
-    session.createdEventIds = body.slotIds.map((sid, i) => `mock_evt_${session.id}_${i}_${sid}`);
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
+    const { calendarWarning } = await applyGoogleCalendarToSession(
+      supabase,
+      user.id,
+      session,
+      body.slotIds,
+    );
     await putSession(session);
-    return NextResponse.json({ session });
+    return NextResponse.json({
+      session,
+      ...(calendarWarning ? { calendarWarning } : {}),
+    });
   }
 
   if (body.action === "organizer_confirm_final") {
@@ -486,12 +508,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     session.organizerPreferredSlotIds = body.slotIds;
     session.organizerFinalIds = finalIds;
-    session.calendarCreated = true;
-    session.createdEventIds = finalIds.map((sid, i) => `mock_evt_${session.id}_${i}_${sid}`);
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
+    const { calendarWarning } = await applyGoogleCalendarToSession(
+      supabase,
+      user.id,
+      session,
+      finalIds,
+    );
     await putSession(session);
-    return NextResponse.json({ session });
+    return NextResponse.json({
+      session,
+      ...(calendarWarning ? { calendarWarning } : {}),
+    });
   }
 
   return NextResponse.json({ error: "unknown_action" }, { status: 400 });
