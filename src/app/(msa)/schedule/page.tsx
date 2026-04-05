@@ -45,7 +45,10 @@ function ScheduleWizard() {
   const loadSessions = useCallback(async () => {
     setLoadingList(true);
     try {
-      const res = await fetch("/api/sessions", { cache: "no-store" });
+      const res = await fetch("/api/sessions", {
+        cache: "no-store",
+        credentials: "include",
+      });
       const data = await res.json();
       setSessions(data.sessions ?? []);
     } catch {
@@ -102,20 +105,33 @@ function ScheduleWizard() {
         timeStart: times[ymd]?.start ?? "19:00",
         timeEnd: times[ymd]?.end ?? "20:00",
       }));
-      const cr = await fetch("/api/sessions", { method: "POST" });
-      if (!cr.ok) throw new Error("create_failed");
-      const created = await cr.json();
+      const cr = await fetch("/api/sessions", {
+        method: "POST",
+        credentials: "include",
+      });
+      const created = await cr.json().catch(() => ({}));
+      if (!cr.ok) {
+        const msg =
+          typeof created.message === "string"
+            ? created.message
+            : "日程の作成に失敗しました（サーバー設定を確認してください）";
+        throw new Error(msg);
+      }
       const id = created.session?.id as string;
       if (!id) throw new Error("no_id");
       const pr = await fetch(`/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ action: "build_slots", items }),
       });
-      if (!pr.ok) throw new Error("build_failed");
+      if (!pr.ok) {
+        const pj = (await pr.json().catch(() => ({}))) as { message?: string };
+        throw new Error(pj.message ?? "候補の保存に失敗しました");
+      }
       router.push(`/session/${id}`);
-    } catch {
-      setError("保存に失敗しました。もう一度お試しください。");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存に失敗しました。もう一度お試しください。");
     } finally {
       setPending(false);
     }

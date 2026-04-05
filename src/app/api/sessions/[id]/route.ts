@@ -16,7 +16,8 @@ import {
 import { buildSlotsDetailed, buildSlotsFromSchedule } from "@/lib/slots";
 import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
 import { createClient } from "@/lib/supabase/server";
-import { getSession, putSession } from "@/lib/store";
+import { persistSessionOrError } from "@/lib/sessionStorageResponse";
+import { getSession } from "@/lib/store";
 import type { Session } from "@/lib/types";
 import { fireAndForgetPush } from "@/lib/webPushServer";
 
@@ -101,7 +102,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     session.participantIds = body.slotIds;
     session.status = "awaiting_organizer_final";
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({ session });
   }
 
@@ -135,7 +139,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
     sessionP.status = "awaiting_organizer_confirm";
-    await putSession(sessionP);
+    {
+      const persistErr = await persistSessionOrError(sessionP);
+      if (persistErr) return persistErr;
+    }
 
     const basePush = getAppBaseUrl();
     fireAndForgetPush(sessionP.organizerUserId, {
@@ -228,7 +235,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ error: "no_valid_slots" }, { status: 400 });
     }
     session.slots = slots;
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({ session });
   }
 
@@ -314,7 +324,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       }
     }
 
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({ session, inviteEmailSent });
   }
 
@@ -422,7 +435,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       }
     }
 
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({
       session,
       inviteEmailSent,
@@ -447,7 +463,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     session.organizerRound1Ids = body.slotIds;
     session.status = "awaiting_participant";
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({ session });
   }
 
@@ -471,7 +490,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       session,
       body.slotIds,
     );
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({
       session,
       ...(calendarWarning ? { calendarWarning } : {}),
@@ -516,7 +538,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       session,
       finalIds,
     );
-    await putSession(session);
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
     return NextResponse.json({
       session,
       ...(calendarWarning ? { calendarWarning } : {}),

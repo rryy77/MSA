@@ -41,23 +41,32 @@ export default function MessagePage() {
     setError(null);
     try {
       const [sr, ir] = await Promise.all([
-        fetch("/api/sessions", { cache: "no-store" }),
-        fetch("/api/inbox", { cache: "no-store" }),
+        fetch("/api/sessions", { cache: "no-store", credentials: "include" }),
+        fetch("/api/inbox", { cache: "no-store", credentials: "include" }),
       ]);
-      if (sr.status === 503) {
-        const j = (await sr.json().catch(() => ({}))) as { error?: string };
-        if (j.error === "supabase_not_configured") {
-          setError(
-            "Supabase の環境変数がサーバーで読み込めていません。Vercel の Project → Settings → Environment Variables に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を「Production」に設定し、保存後に再デプロイしてください（ローカルの .env.local はデプロイに含まれません）。",
-          );
-          setSessions([]);
-          setInbox([]);
-          return;
-        }
+      const sJson = (await sr.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+        sessions?: Summary[];
+      };
+      if (sr.status === 503 && sJson.error === "supabase_not_configured") {
+        setError(
+          "Supabase の環境変数がサーバーで読み込めていません。Vercel の Project → Settings → Environment Variables に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を「Production」に設定し、保存後に再デプロイしてください（ローカルの .env.local はデプロイに含まれません）。",
+        );
+        setSessions([]);
+        setInbox([]);
+        return;
       }
-      if (!sr.ok) throw new Error("sessions_failed");
-      const sData = await sr.json();
-      setSessions(sData.sessions ?? []);
+      if (!sr.ok) {
+        setSessions([]);
+        setError(
+          typeof sJson.message === "string"
+            ? sJson.message
+            : `日程一覧を読み込めません（HTTP ${sr.status}）`,
+        );
+      } else {
+        setSessions(sJson.sessions ?? []);
+      }
 
       const irText = await ir.text();
       if (!ir.ok) {

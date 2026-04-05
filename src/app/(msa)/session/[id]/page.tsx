@@ -64,6 +64,8 @@ const SESSION_PATCH_ERROR_JA: Record<string, string> = {
   invalid_participant_user: "参加者の指定が不正です",
   profile_not_found: "参加者のプロフィールが見つかりません",
   inbox_save_failed: "通知の保存に失敗しました。しばらくしてから再度お試しください。",
+  session_save_failed:
+    "日程の保存に失敗しました。表示される詳細メッセージを確認するか、ページを再読み込みしてください。",
 };
 
 function messageForFailedSessionPatch(
