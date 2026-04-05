@@ -30,7 +30,13 @@ export async function applyGoogleCalendarToSession(
     return { calendarWarning: "no_slots" };
   }
 
-  const refreshToken = await fetchGoogleCalendarRefreshToken(supabase, userId);
+  let refreshToken: string | null = null;
+  try {
+    refreshToken = await fetchGoogleCalendarRefreshToken(supabase, userId);
+  } catch (e) {
+    console.error("fetchGoogleCalendarRefreshToken", e);
+    refreshToken = null;
+  }
   if (!refreshToken) {
     session.calendarCreated = false;
     session.createdEventIds = [];

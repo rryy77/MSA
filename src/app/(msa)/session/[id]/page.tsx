@@ -32,6 +32,64 @@ type Session = {
   calendarMeetLinks?: string[];
 };
 
+/** PATCH /api/sessions/[id] の error コード → ユーザー向け日本語 */
+const SESSION_PATCH_ERROR_JA: Record<string, string> = {
+  unauthorized:
+    "ログインの有効期限が切れている可能性があります。ページを再読み込みするか、ログアウトしてからログインし直してください。",
+  forbidden: "この操作を行う権限がありません。",
+  not_found: "セッションが見つかりません。",
+  invalid_status:
+    "画面の状態が古い可能性があります。ページを再読み込みしてから、もう一度確定してください。",
+  legacy_session: "このセッションは古い形式のため、ここから確定できません。",
+  already_completed: "すでに確定済みです。ページを再読み込みしてください。",
+  invalid_json: "送信データが不正です。ページを再読み込みしてください。",
+  supabase_not_configured: "サーバー設定（Supabase）が不足しています。",
+  build_slots_first: "先に候補日時を作成してください。",
+  slots_already_built: "候補はすでに作成済みです。ページを再読み込みしてください。",
+  no_participant_selection: "参加者の候補がまだありません。",
+  slot_ids_required: "候補日時を選んでください",
+  invalid_slot: "選べない日時が含まれています",
+  unknown_slot: "無効な候補です",
+  no_overlap:
+    "参加者の候補と主催者の候補に共通する枠がありません。主催者のチェックを調整してください。",
+  invalid_participant_email: "有効なメールアドレスを入力してください",
+  participant_is_self: "自分自身を参加者には指定できません",
+  unknown_action: "不正な操作です。ページを再読み込みしてください",
+  items_required: "日時の入力が必要です",
+  invalid_date: "無効な日付です",
+  invalid_time_format: "時間の形式が不正です",
+  dates_required: "日付を選んでください",
+  no_valid_slots: "有効な候補を作成できませんでした",
+  participant_not_registered: "このメールはアプリ未登録です",
+  invalid_participant_user: "参加者の指定が不正です",
+  profile_not_found: "参加者のプロフィールが見つかりません",
+  inbox_save_failed: "通知の保存に失敗しました。しばらくしてから再度お試しください。",
+};
+
+function messageForFailedSessionPatch(
+  res: Response,
+  j: { error?: string; message?: string },
+): string {
+  if (j.message) return j.message;
+  const code = j.error;
+  if (code && SESSION_PATCH_ERROR_JA[code]) return SESSION_PATCH_ERROR_JA[code];
+  if (code) return code;
+  const byStatus: Record<number, string> = {
+    401: SESSION_PATCH_ERROR_JA.unauthorized,
+    403: SESSION_PATCH_ERROR_JA.forbidden,
+    404: SESSION_PATCH_ERROR_JA.not_found,
+    409:
+      "すでに処理済みか、状態が変わっています。ページを再読み込みしてから再度お試しください。",
+    500: "サーバーでエラーが発生しました。しばらくしてからもう一度お試しください。",
+    502: "サーバーに一時的に接続できませんでした。通信状況を確認してください。",
+    503: "サービスが一時的に利用できません。しばらくしてから再度お試しください。",
+  };
+  return (
+    byStatus[res.status] ??
+    `保存に失敗しました（HTTP ${res.status}）。ページを再読み込みしてから再度お試しください。`
+  );
+}
+
 export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const [id, setId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -49,6 +107,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   /** 主催者が「都合が付く」とチェックした枠（確定時に参加者候補との積集合になる） */
   const [organizerSelected, setOrganizerSelected] = useState<Set<string>>(new Set());
   const organizerInitRef = useRef<string | null>(null);
+  /** 確定ボタンの二重タップで PATCH が重複しないようにする */
+  const finalizeInFlightRef = useRef(false);
 
   useEffect(() => {
     let c = true;
@@ -64,7 +124,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     if (!id) return;
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/sessions/${id}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
       if (res.status === 401) {
         setError("ログインが必要です");
         return;
@@ -127,6 +190,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        credentials: "include",
       });
       const j = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -136,22 +200,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         calendarWarning?: string;
       };
       if (!res.ok) {
-        const code = j.error;
-        const byCode: Record<string, string> = {
-          invalid_participant_email: "有効なメールアドレスを入力してください",
-          participant_is_self: "自分自身を参加者には指定できません",
-          unknown_action: "不正な操作です。ページを再読み込みしてください",
-          no_participant_selection: "参加者の候補がまだありません",
-          slot_ids_required: "候補日時を選んでください",
-          invalid_slot: "選べない日時が含まれています",
-          unknown_slot: "無効な候補です",
-          invalid_json: "送信データが不正です",
-          no_overlap:
-            "参加者の候補と主催者の候補に共通する枠がありません。主催者のチェックを調整してください。",
-        };
-        throw new Error(
-          j.message || (code && byCode[code]) || code || "保存に失敗しました",
-        );
+        throw new Error(messageForFailedSessionPatch(res, j));
       }
       if (j.session) setSession(j.session);
       const action = (body as { action?: string }).action;
@@ -200,7 +249,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   }
 
   async function confirmFinal() {
-    if (!session) return;
+    if (!session || pending) return;
     const slotIds = Array.from(organizerSelected);
     if (slotIds.length === 0) {
       setError("主催者の都合が付く枠を1つ以上選んでください");
@@ -214,7 +263,13 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       );
       return;
     }
-    await patch({ action: "organizer_confirm_final", slotIds });
+    if (finalizeInFlightRef.current) return;
+    finalizeInFlightRef.current = true;
+    try {
+      await patch({ action: "organizer_confirm_final", slotIds });
+    } finally {
+      finalizeInFlightRef.current = false;
+    }
   }
 
   function toggleOrganizerSlot(sid: string) {
