@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { PushNotificationSettings } from "@/components/PushNotificationSettings";
 
 type Summary = {
   id: string;
@@ -49,7 +48,7 @@ export default function MessagePage() {
         const j = (await sr.json().catch(() => ({}))) as { error?: string };
         if (j.error === "supabase_not_configured") {
           setError(
-            "Supabase が未設定です。.env.local に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。",
+            "Supabase の環境変数がサーバーで読み込めていません。Vercel の Project → Settings → Environment Variables に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を「Production」に設定し、保存後に再デプロイしてください（ローカルの .env.local はデプロイに含まれません）。",
           );
           setSessions([]);
           setInbox([]);
@@ -132,8 +131,6 @@ export default function MessagePage() {
           ログイン中のみ、参加案内や進行中の調整を確認できます。
         </p>
       </header>
-
-      <PushNotificationSettings />
 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-zinc-300">受信トレイ（参加案内）</h2>
