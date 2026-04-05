@@ -38,7 +38,9 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
     try {
       const res = await fetch(`/api/sessions/as-participant/${id}`, { cache: "no-store" });
       if (res.status === 401) {
-        setError("ログインが必要です");
+        setError(
+          "このURLはログインが必要な古い形式です。主催者から届いたメールに記載の「/p/ で始まるリンク」を開いてください（ログイン不要で回答できます）。",
+        );
         return;
       }
       if (res.status === 403) {

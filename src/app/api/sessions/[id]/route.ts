@@ -16,6 +16,7 @@ import {
 import { buildSlotsDetailed, buildSlotsFromSchedule } from "@/lib/slots";
 import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { getSession } from "@/lib/store";
 import type { Session } from "@/lib/types";
@@ -30,6 +31,7 @@ type PatchBody =
   | { action: "wizard_finalize"; participantUserId?: string }
   | { action: "send_schedule_invite"; participantEmail: string }
   | { action: "participant_submit_availability"; slotIds: string[] }
+  | { action: "participant_submit_availability_token"; token: string; slotIds: string[] }
   | { action: "organizer_confirm_final"; slotIds: string[] };
 
 const HM = /^\d{1,2}:\d{2}$/;
@@ -107,6 +109,62 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (persistErr) return persistErr;
     }
     return NextResponse.json({ session });
+  }
+
+  /** メールリンク用: ログイン不要。participantToken で本人確認 */
+  if (body.action === "participant_submit_availability_token") {
+    const sessionP = withDefaults(raw);
+    if (sessionP.status !== "awaiting_participant_availability") {
+      return NextResponse.json({ error: "invalid_status" }, { status: 409 });
+    }
+    if (typeof body.token !== "string" || body.token !== sessionP.participantToken) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    if (!body.slotIds?.length) {
+      return NextResponse.json({ error: "slot_ids_required" }, { status: 400 });
+    }
+    const allowed = new Set(sessionP.organizerRound1Ids);
+    for (const sid of body.slotIds) {
+      if (!allowed.has(sid)) {
+        return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
+      }
+    }
+    sessionP.participantPreferredSlotIds = body.slotIds;
+    sessionP.participantIds = body.slotIds;
+    sessionP.status = "awaiting_organizer_confirm";
+    {
+      const persistErr = await persistSessionOrError(sessionP);
+      if (persistErr) return persistErr;
+    }
+
+    const basePush = getAppBaseUrl();
+    fireAndForgetPush(sessionP.organizerUserId, {
+      title: "MSA: 日程の返信",
+      body: "参加者が候補を選びました",
+      url: `${basePush}/session/${sessionP.id}`,
+    });
+
+    const service = createServiceRoleClient();
+    if (sessionP.organizerUserId && isOutboundEmailConfigured() && service) {
+      const pickedSlots = sessionP.slots.filter((s) =>
+        sessionP.participantPreferredSlotIds?.includes(s.id),
+      );
+      try {
+        const orgEmail = await fetchProfileEmail(service, sessionP.organizerUserId);
+        if (orgEmail) {
+          const base = getAppBaseUrl();
+          const sessionUrl = `${base}/session/${sessionP.id}`;
+          await sendOrganizerParticipantRepliedEmail(orgEmail, sessionUrl, {
+            sessionId: sessionP.id,
+            participantSlots: pickedSlots,
+          });
+        }
+      } catch (e) {
+        console.error("organizer_reply_email", e);
+      }
+    }
+
+    return NextResponse.json({ session: sessionP });
   }
 
   if (body.action === "participant_submit_availability") {
@@ -275,7 +333,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.emailSentAt = new Date().toISOString();
 
     const base = getAppBaseUrl();
-    const respondUrl = `${base}/respond/${session.id}`;
+    const respondUrl = `${base}/p/${encodeURIComponent(session.participantToken)}`;
 
     const payload = buildParticipantInvitePayload(respondUrl, {
       sessionId: session.id,

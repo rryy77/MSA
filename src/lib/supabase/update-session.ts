@@ -43,7 +43,8 @@ export async function updateSession(request: NextRequest) {
     const isPublicPage =
       pathname.startsWith("/login") ||
       pathname.startsWith("/auth/callback") ||
-      pathname.startsWith("/p/");
+      pathname.startsWith("/p/") ||
+      pathname.startsWith("/respond/");
     const isApi = pathname.startsWith("/api/");
 
     if (!user && !isPublicPage && !isApi) {
