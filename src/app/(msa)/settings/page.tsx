@@ -19,6 +19,7 @@ export default function SettingsPage() {
     connected: boolean;
     oauthConfigured: boolean;
     loggedIn: boolean;
+    oauthRedirectUri?: string | null;
   } | null>(null);
   const [calMsg, setCalMsg] = useState<string | null>(null);
   /** null = モーダルなし。0 になったら即リダイレクト */
@@ -123,12 +124,15 @@ export default function SettingsPage() {
           connected?: boolean;
           oauthConfigured?: boolean;
           loggedIn?: boolean;
+          oauthRedirectUri?: string | null;
         }) => {
           if (!cancelled && typeof j.oauthConfigured === "boolean") {
             setCalStatus({
               connected: Boolean(j.connected),
               oauthConfigured: j.oauthConfigured,
               loggedIn: j.loggedIn !== false,
+              oauthRedirectUri:
+                typeof j.oauthRedirectUri === "string" ? j.oauthRedirectUri : null,
             });
           }
         },
@@ -139,6 +143,7 @@ export default function SettingsPage() {
             connected: false,
             oauthConfigured: false,
             loggedIn: false,
+            oauthRedirectUri: null,
           });
         }
       })
@@ -351,8 +356,18 @@ export default function SettingsPage() {
         <li className="border-b border-zinc-800 px-4 py-4">
           <p className="text-sm font-medium">Google カレンダー</p>
           <p className="mt-1 text-xs text-zinc-500">
-            日程を確定したとき、主催者のカレンダーに Meet 付きの予定を追加し、参加者に招待メールが届きます。
+            日程を確定したとき、主催者の Google カレンダーに Meet 付きの予定を追加します。
           </p>
+          {calStatus?.oauthRedirectUri && (
+            <p className="mt-2 break-all rounded-lg border border-zinc-700 bg-zinc-950/80 px-2 py-2 font-mono text-[11px] leading-relaxed text-zinc-300">
+              <span className="font-sans text-zinc-500">
+                Google Cloud の「承認済みのリダイレクト URI」に次を<strong>そのまま</strong>追加（
+                <code className="text-zinc-400">redirect_uri_mismatch</code> 対策）:
+              </span>
+              <br />
+              {calStatus.oauthRedirectUri}
+            </p>
+          )}
           {calLoading ? (
             <p className="mt-2 text-xs text-zinc-500">読み込み中…</p>
           ) : !calStatus?.oauthConfigured ? (
