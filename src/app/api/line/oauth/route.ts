@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getLineOAuthClientCredentials } from "@/lib/lineOAuthCredentials";
 import {
   LINE_OAUTH_REDIRECT_COOKIE,
   getLineOAuthRedirectUriForRequest,
@@ -19,8 +20,8 @@ export async function GET(request: Request) {
   const auth = await getMsaAuth();
   if ("error" in auth) return auth.error;
 
-  const channelId = process.env.LINE_CHANNEL_ID?.trim();
-  const channelSecret = process.env.LINE_CHANNEL_SECRET?.trim();
+  const { clientId: channelId, clientSecret: channelSecret } =
+    getLineOAuthClientCredentials();
   if (!channelId || !channelSecret) {
     return NextResponse.redirect(
       new URL("/settings?line=error&reason=line_channel_not_configured", baseFallback),

@@ -2,6 +2,18 @@ import { getOriginFromRequest } from "@/lib/requestOrigin";
 
 const LINE_CALLBACK_PATH = "/api/line/callback";
 
+/** :443 / :80 は Callback URL 登録とズレやすいので除去 */
+function normalizeRedirectUriString(u: string): string {
+  try {
+    const x = new URL(u);
+    if (x.protocol === "https:" && x.port === "443") x.port = "";
+    if (x.protocol === "http:" && x.port === "80") x.port = "";
+    return x.href.replace(/\/$/, "");
+  } catch {
+    return u.replace(/\/$/, "");
+  }
+}
+
 /** Cookie: LINE 認可開始時の redirect_uri（トークン交換で同一文字列が必須） */
 export const LINE_OAUTH_REDIRECT_COOKIE = "line_oauth_redirect_uri";
 
@@ -31,8 +43,8 @@ export function isSafeLineOAuthRedirectUri(value: string): boolean {
 export function getLineOAuthRedirectUriForRequest(request: Request): string {
   const explicit = process.env.LINE_LOGIN_REDIRECT_URI?.trim();
   if (explicit) {
-    return explicit.replace(/\/$/, "");
+    return normalizeRedirectUriString(explicit.replace(/\/$/, ""));
   }
   const origin = getOriginFromRequest(request).replace(/\/$/, "");
-  return `${origin}${LINE_CALLBACK_PATH}`;
+  return normalizeRedirectUriString(`${origin}${LINE_CALLBACK_PATH}`);
 }

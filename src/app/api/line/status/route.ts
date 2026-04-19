@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
+import { getLineOAuthClientCredentials } from "@/lib/lineOAuthCredentials";
 import { isLineMessagingPushEnvConfigured } from "@/lib/lineMessagingPush";
 import { getMsaAuth } from "@/lib/msaApiAuth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 
 export async function GET() {
-  const loginConfigured = Boolean(
-    process.env.LINE_CHANNEL_ID?.trim() && process.env.LINE_CHANNEL_SECRET?.trim(),
-  );
+  const { clientId, clientSecret } = getLineOAuthClientCredentials();
+  const loginConfigured = Boolean(clientId && clientSecret);
   const pushConfigured = isLineMessagingPushEnvConfigured();
 
   const auth = await getMsaAuth();

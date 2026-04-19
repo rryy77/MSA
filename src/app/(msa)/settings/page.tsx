@@ -460,11 +460,15 @@ export default function SettingsPage() {
           ) : !lineStatus?.loginConfigured ? (
             <p className="mt-2 text-xs text-amber-200/90">
               サーバーに{" "}
-              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">LINE_CHANNEL_ID</code>{" "}
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">
+                LINE_LOGIN_CHANNEL_ID
+              </code>{" "}
               と{" "}
-              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">LINE_CHANNEL_SECRET</code>{" "}
-              が未設定です。LINE Developers のチャネル（LINE Login 有効）を用意し、環境変数とコールバック URL
-              を設定してください（.env.example 参照）。
+              <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px]">
+                LINE_LOGIN_CHANNEL_SECRET
+              </code>{" "}
+              （LINEログインチャネル）が未設定です。Messaging API チャネル ID では OAuth できません。.env.example
+              の Callback URL 手順を参照してください。
             </p>
           ) : !lineStatus.loggedIn ? (
             <p className="mt-2 text-xs text-zinc-400">
