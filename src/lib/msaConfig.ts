@@ -1,13 +1,11 @@
 /**
- * 2 名専用モード: 主催者 A / 参加者 B を環境変数で固定。
- * Supabase の auth.users に、A・B それぞれのユーザーと profiles を用意し、UUID を設定する。
+ * 2 名専用モード: 主催者 A / 参加者 B を UUID のみで固定（メールアドレスは不要）。
+ * Supabase の auth.users に A・B のユーザーと profiles を用意し、ID を設定する。
  */
 
 export type MsaConfig = {
   organizerId: string;
   participantId: string;
-  organizerEmail: string;
-  participantEmail: string;
 };
 
 let cached: MsaConfig | null = null;
@@ -16,14 +14,10 @@ export function getMsaConfig(): MsaConfig {
   if (cached) return cached;
   const organizerId = process.env.MSA_USER_A_ID?.trim();
   const participantId = process.env.MSA_USER_B_ID?.trim();
-  const organizerEmail = process.env.MSA_USER_A_EMAIL?.trim().toLowerCase();
-  const participantEmail = process.env.MSA_USER_B_EMAIL?.trim().toLowerCase();
-  if (!organizerId || !participantId || !organizerEmail || !participantEmail) {
-    throw new Error(
-      "MSA_USER_A_ID, MSA_USER_B_ID, MSA_USER_A_EMAIL, MSA_USER_B_EMAIL がすべて必要です。",
-    );
+  if (!organizerId || !participantId) {
+    throw new Error("MSA_USER_A_ID と MSA_USER_B_ID が必要です。");
   }
-  cached = { organizerId, participantId, organizerEmail, participantEmail };
+  cached = { organizerId, participantId };
   return cached;
 }
 

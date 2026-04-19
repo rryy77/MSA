@@ -162,7 +162,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
     sessionP.organizerFinalIds = body.slotIds;
-    sessionP.participantEmail = cfgToken.participantEmail;
     sessionP.status = "completed";
     sessionP.finalizedAt = new Date().toISOString();
 
@@ -221,7 +220,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
     sessionP.organizerFinalIds = body.slotIds;
-    sessionP.participantEmail = cfg.participantEmail;
     sessionP.status = "completed";
     sessionP.finalizedAt = new Date().toISOString();
 
@@ -323,7 +321,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ error: "build_slots_first" }, { status: 409 });
     }
     const participantUserId = cfgOrg.participantId;
-    const em = cfgOrg.participantEmail;
     if (participantUserId === msaOrg.uid) {
       return NextResponse.json({ error: "participant_is_self" }, { status: 400 });
     }
@@ -331,7 +328,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const allIds = session.slots.map((s) => s.id);
     session.organizerRound1Ids = allIds;
     session.participantUserId = participantUserId;
-    session.participantEmail = em;
     session.status = "awaiting_participant_availability";
     session.scheduleInviteSentAt = new Date().toISOString();
     session.emailSentAt = new Date().toISOString();
@@ -403,7 +399,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.finalizedAt = new Date().toISOString();
     session.emailSentAt = new Date().toISOString();
     session.participantUserId = participantUserId;
-    session.participantEmail = cfgOrg.participantEmail;
 
     const { calendarWarning } = await applyGoogleCalendarToSession(msaOrg.uid, session, all);
 

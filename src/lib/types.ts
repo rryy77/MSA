@@ -23,7 +23,7 @@ export type Session = {
   participantToken: string;
   /** 案内を送った参加者ユーザー（アプリ登録者） */
   participantUserId?: string;
-  /** 参加案内を送る相手のメール（正規化済み） */
+  /** 旧データ用（現在は未使用） */
   participantEmail?: string;
   /** 参加者が「行ける」とチェックした枠（主催者の確定前） */
   participantPreferredSlotIds?: string[];

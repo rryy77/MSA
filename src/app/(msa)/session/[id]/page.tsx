@@ -15,7 +15,6 @@ type Session = {
   participantIds: string[];
   organizerFinalIds: string[];
   participantToken: string;
-  participantEmail?: string;
   participantUserId?: string;
   participantPreferredSlotIds?: string[];
   organizerPreferredSlotIds?: string[];

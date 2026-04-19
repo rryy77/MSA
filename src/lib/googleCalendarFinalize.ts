@@ -47,7 +47,8 @@ export async function applyGoogleCalendarToSession(
       slots,
       {
         summaryPrefix: `MSA ${session.triggerDateJst}`,
-        attendeeEmail: session.participantEmail ?? null,
+        /** 2 名専用アプリではメールで招待しない（主催者のカレンダーのみに作成） */
+        attendeeEmail: null,
       },
     );
     session.calendarCreated = true;
