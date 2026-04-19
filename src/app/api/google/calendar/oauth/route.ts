@@ -18,7 +18,8 @@ export async function GET() {
   const url = oauth2.generateAuthUrl({
     access_type: "offline",
     scope: ["https://www.googleapis.com/auth/calendar.events"],
-    prompt: "consent",
+    /** その都度アカウントを選べるようにする（テストユーザー固定で進まない） */
+    prompt: "consent select_account",
     include_granted_scopes: true,
     state: auth.ok.cfg.organizerId,
   });
