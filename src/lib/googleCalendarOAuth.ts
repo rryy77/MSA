@@ -3,6 +3,7 @@ import { google } from "googleapis";
 
 import { getAppBaseUrl } from "@/lib/appUrl";
 import { msaSessionSecret } from "@/lib/msaConfig";
+import { getOriginFromRequest } from "@/lib/requestOrigin";
 
 /** 未設定時は getAppBaseUrl() + 固定パス（.env で上書き可）。リクエストがない API 向け。 */
 export function getGoogleCalendarRedirectUri(): string {
@@ -17,23 +18,6 @@ export function getGoogleCalendarRedirectUri(): string {
  * ブラウザが実際に開いているホストと一致する redirect_uri（400 redirect_uri_mismatch 対策）。
  * GOOGLE_CALENDAR_REDIRECT_URI が未設定のとき、Vercel の VERCEL_URL とカスタムドメインの食い違いを防ぐ。
  */
-function getOriginFromRequest(request: Request): string {
-  const url = new URL(request.url);
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-
-  // Vercel 等: 必ず x-forwarded-* を優先（request.url が内部 URL になることがある）
-  if (forwardedHost) {
-    const proto = forwardedProto || "https";
-    return `${proto}://${forwardedHost}`;
-  }
-
-  const host = request.headers.get("host")?.split(",")[0]?.trim() || url.host;
-  const proto =
-    forwardedProto || (url.protocol === "https:" ? "https" : "http");
-  return `${proto}://${host}`;
-}
-
 export function getGoogleCalendarRedirectUriForRequest(request: Request): string {
   const explicit = process.env.GOOGLE_CALENDAR_REDIRECT_URI?.trim();
   if (explicit) {
