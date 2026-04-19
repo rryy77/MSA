@@ -1,11 +1,20 @@
 "use client";
 
 import { DateTime } from "luxon";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  OrganizerCalendarPicker,
+  type CalendarViewMode,
+} from "@/components/msa/OrganizerCalendarPicker";
 import { TIMEZONE } from "@/lib/constants";
-import { getSelectableDatesJst } from "@/lib/dateRange";
+import {
+  firstYmdMatchingWeekday,
+  type DayRememberSuggestion,
+} from "@/lib/dayRemember";
+import { getSelectableDatesJstYear } from "@/lib/dateRange";
+import { ymdRangeOverlapsBusy } from "@/lib/organizerBusyCheck";
 
 const WD_LABEL = ["", "月", "火", "水", "木", "金", "土", "日"];
 
@@ -22,9 +31,16 @@ type Summary = { id: string; status: string; triggerDateJst: string; triggerAt: 
 function ScheduleWizard() {
   const [step, setStep] = useState<Step>("menu");
   const [eligibleDates, setEligibleDates] = useState<string[]>([]);
+  const eligibleSet = useMemo(() => new Set(eligibleDates), [eligibleDates]);
   const [selectedYmd, setSelectedYmd] = useState<Set<string>>(new Set());
   const [concreteDates, setConcreteDates] = useState<string[]>([]);
   const [times, setTimes] = useState<Record<string, { start: string; end: string }>>({});
+  const [calendarBusy, setCalendarBusy] = useState<{ start: string; end: string }[]>([]);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
+  const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
+  const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,8 +65,18 @@ function ScheduleWizard() {
   }, [searchParams]);
 
   useEffect(() => {
-    setEligibleDates(getSelectableDatesJst(new Date()));
+    setEligibleDates(getSelectableDatesJstYear(new Date()));
   }, []);
+
+  const refreshGoogleStatus = useCallback(async () => {
+    const r = await fetch("/api/google/calendar/status", { credentials: "include", cache: "no-store" });
+    const j = (await r.json().catch(() => ({}))) as { connected?: boolean };
+    setGoogleConnected(Boolean(j.connected));
+  }, []);
+
+  useEffect(() => {
+    void refreshGoogleStatus();
+  }, [refreshGoogleStatus]);
 
   const loadSessions = useCallback(async () => {
     setLoadingList(true);
@@ -72,6 +98,15 @@ function ScheduleWizard() {
     if (step === "confirm") loadSessions();
   }, [step, loadSessions]);
 
+  useEffect(() => {
+    if (step !== "pickDates") return;
+    void (async () => {
+      const r = await fetch("/api/msa/day-remember", { credentials: "include", cache: "no-store" });
+      const j = (await r.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
+      setSuggestions(j.suggestions ?? []);
+    })();
+  }, [step]);
+
   function toggleYmd(ymd: string) {
     setSelectedYmd((prev) => {
       const n = new Set(prev);
@@ -81,7 +116,42 @@ function ScheduleWizard() {
     });
   }
 
-  function goTimes() {
+  async function startPickDates() {
+    setError(null);
+    await refreshGoogleStatus();
+    const r = await fetch("/api/google/calendar/status", { credentials: "include", cache: "no-store" });
+    const j = (await r.json().catch(() => ({}))) as { connected?: boolean };
+    if (!j.connected) {
+      setError(
+        "日程作成の前に、設定で Google カレンダーと連携してください（予定のある時間帯を避けるため）。",
+      );
+      return;
+    }
+    setGoogleConnected(true);
+    setSelectedYmd(new Set());
+    setStep("pickDates");
+  }
+
+  function applySuggestion(s: DayRememberSuggestion) {
+    const sorted = [...eligibleDates].sort();
+    const ymd = firstYmdMatchingWeekday(sorted, s.dow);
+    if (!ymd) {
+      setError("この曜日に該当する日付が候補（1年分）にありません。");
+      return;
+    }
+    setSelectedYmd(new Set([ymd]));
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const sh = Math.floor(s.startMin / 60);
+    const sm = s.startMin % 60;
+    const eh = Math.floor(s.endMin / 60);
+    const em = s.endMin % 60;
+    setTimes({
+      [ymd]: { start: `${pad(sh)}:${pad(sm)}`, end: `${pad(eh)}:${pad(em)}` },
+    });
+    setError(null);
+  }
+
+  async function goTimes() {
     if (selectedYmd.size === 0) {
       setError("日付を1つ以上選んでください");
       return;
@@ -96,6 +166,25 @@ function ScheduleWizard() {
       }
       return next;
     });
+
+    const from = DateTime.fromISO(dates[0], { zone: TIMEZONE }).startOf("day").toISO()!;
+    const to = DateTime.fromISO(dates[dates.length - 1], { zone: TIMEZONE }).endOf("day").toISO()!;
+    const br = await fetch(
+      `/api/google/calendar/busy?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { credentials: "include", cache: "no-store" },
+    );
+    if (!br.ok) {
+      const ej = (await br.json().catch(() => ({}))) as { error?: string };
+      setCalendarBusy([]);
+      setError(
+        ej.error === "google_calendar_not_connected"
+          ? "Google カレンダーが未連携です。設定から連携してください。"
+          : "Google カレンダーの予定を取得できませんでした。",
+      );
+      return;
+    }
+    const bj = (await br.json().catch(() => ({}))) as { busy?: { start: string; end: string }[] };
+    setCalendarBusy(bj.busy ?? []);
     setStep("times");
   }
 
@@ -106,7 +195,33 @@ function ScheduleWizard() {
     }));
   }
 
+  function validateNoBusyOverlap(): string | null {
+    for (const ymd of concreteDates) {
+      const st = times[ymd]?.start ?? "19:00";
+      const en = times[ymd]?.end ?? "20:00";
+      if (ymdRangeOverlapsBusy(ymd, st, en, calendarBusy)) {
+        return `${formatYmdChip(ymd)} の時間が、Google カレンダー上の予定と重なっています。空いている時間帯に変更してください。`;
+      }
+    }
+    return null;
+  }
+
+  function goReview() {
+    const v = validateNoBusyOverlap();
+    if (v) {
+      setError(v);
+      return;
+    }
+    setError(null);
+    setStep("review");
+  }
+
   async function submitWizard() {
+    const v = validateNoBusyOverlap();
+    if (v) {
+      setError(v);
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -172,14 +287,19 @@ function ScheduleWizard() {
             <h1 className="text-xl font-bold text-zinc-100">予定</h1>
             <p className="mt-1 text-sm text-zinc-400">作成または一覧の確認</p>
           </header>
+          {googleConnected === false && (
+            <p className="rounded-xl border border-amber-700/50 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
+              日程作成には「設定」で{" "}
+              <Link href="/settings" className="font-medium underline">
+                Google カレンダー連携
+              </Link>
+              が必要です（連携後、空き時間のみ選べます）。
+            </p>
+          )}
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => {
-                setError(null);
-                setSelectedYmd(new Set());
-                setStep("pickDates");
-              }}
+              onClick={() => void startPickDates()}
               className="flex-1 rounded-2xl bg-zinc-800 px-4 py-4 text-base font-semibold text-zinc-100 ring-1 ring-zinc-700 transition hover:bg-zinc-700"
             >
               予定作成
@@ -236,35 +356,27 @@ function ScheduleWizard() {
             </button>
           </header>
           <p className="text-sm text-zinc-400">
-            時間はまだ選びません。候補日のうち参加できる日を選んでください。例: 4月4日に予定を作成した場合、候補は4月4日〜4月12日まで（9日間）です。
+            開始日を含む<strong className="text-zinc-200">1年分</strong>
+            の日付から選べます。週／月表示を切り替えてください（初期は週）。
           </p>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <div className="flex flex-wrap gap-2">
-            {eligibleDates.map((ymd) => {
-              const sel = selectedYmd.has(ymd);
-              return (
-                <button
-                  key={ymd}
-                  type="button"
-                  onClick={() => toggleYmd(ymd)}
-                  className={
-                    "rounded-xl border px-3 py-2.5 text-sm font-semibold transition " +
-                    (sel
-                      ? "border-sky-500 bg-sky-600/30 text-sky-100"
-                      : "border-zinc-600 bg-zinc-800 text-zinc-200 hover:border-zinc-500")
-                  }
-                >
-                  {formatYmdChip(ymd)}
-                </button>
-              );
-            })}
-          </div>
+          <OrganizerCalendarPicker
+            eligibleYmd={eligibleSet}
+            selectedYmd={selectedYmd}
+            onToggleYmd={toggleYmd}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            anchor={anchor}
+            onAnchorChange={setAnchor}
+            suggestions={suggestions}
+            onApplySuggestion={applySuggestion}
+          />
           <button
             type="button"
-            onClick={goTimes}
+            onClick={() => void goTimes()}
             className="mt-2 w-full rounded-xl bg-zinc-800 py-3.5 text-base font-semibold text-zinc-100 ring-1 ring-zinc-600 hover:bg-zinc-700"
           >
-            次へ
+            次へ（時間を選ぶ）
           </button>
         </div>
       )}
@@ -277,7 +389,11 @@ function ScheduleWizard() {
               戻る
             </button>
           </header>
-          <p className="text-sm text-zinc-400">日付ごとに開始・終了時刻を指定してください。</p>
+          <p className="text-sm text-zinc-400">
+            Google カレンダーに入っている予定と<strong className="text-zinc-200">重なる時間帯</strong>
+            は選べません。午前のみ埋まっている日は午後を、終日近くまで埋まっている場合は空いている枠だけを指定してください。
+          </p>
+          {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex flex-col gap-4">
             {concreteDates.map((ymd) => (
               <div
@@ -306,15 +422,22 @@ function ScheduleWizard() {
                     />
                   </label>
                 </div>
+                {ymdRangeOverlapsBusy(
+                  ymd,
+                  times[ymd]?.start ?? "19:00",
+                  times[ymd]?.end ?? "20:00",
+                  calendarBusy,
+                ) && (
+                  <p className="mt-2 text-xs text-amber-300">
+                    この時間帯は Google カレンダーの予定と重なっています。
+                  </p>
+                )}
               </div>
             ))}
           </div>
           <button
             type="button"
-            onClick={() => {
-              setError(null);
-              setStep("review");
-            }}
+            onClick={goReview}
             className="w-full rounded-xl bg-zinc-800 py-3.5 text-base font-semibold text-zinc-100 ring-1 ring-zinc-600 hover:bg-zinc-700"
           >
             次へ
@@ -347,14 +470,13 @@ function ScheduleWizard() {
           <button
             type="button"
             disabled={pending}
-            onClick={submitWizard}
+            onClick={() => void submitWizard()}
             className="w-full rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/40 hover:bg-blue-500 disabled:opacity-50"
           >
             {pending ? "保存中…" : "候補を保存して次へ"}
           </button>
         </div>
       )}
-
     </div>
   );
 }

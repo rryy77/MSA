@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { randomBytes } from "crypto";
 import { TIMEZONE } from "./constants";
-import { getSelectableDatesJst } from "./dateRange";
+import { getSelectableDatesJstYear } from "./dateRange";
 import type { Session } from "./types";
 
 function newId() {
@@ -15,7 +15,7 @@ function participantToken() {
 export function createSession(trigger: Date = new Date()): Session {
   const jst = DateTime.fromJSDate(trigger).setZone(TIMEZONE);
   const triggerDateJst = jst.toISODate()!;
-  const candidateDates = getSelectableDatesJst(trigger);
+  const candidateDates = getSelectableDatesJstYear(trigger);
 
   return {
     id: newId(),

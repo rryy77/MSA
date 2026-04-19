@@ -31,7 +31,10 @@ export async function GET(request: Request) {
 
   const url = oauth2.generateAuthUrl({
     access_type: "offline",
-    scope: ["https://www.googleapis.com/auth/calendar.events"],
+    scope: [
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.readonly",
+    ],
     prompt: "consent select_account",
     include_granted_scopes: true,
     state,

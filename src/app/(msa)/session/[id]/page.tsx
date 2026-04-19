@@ -1,7 +1,16 @@
 "use client";
 
+import { DateTime } from "luxon";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import {
+  OrganizerCalendarPicker,
+  type CalendarViewMode,
+} from "@/components/msa/OrganizerCalendarPicker";
+import { useMsaPollRefresh } from "@/hooks/useMsaPollRefresh";
+import { TIMEZONE } from "@/lib/constants";
+import { firstYmdMatchingWeekday, type DayRememberSuggestion } from "@/lib/dayRemember";
+import { ymdRangeOverlapsBusy } from "@/lib/organizerBusyCheck";
 
 type Slot = { id: string; label: string; start: string; end: string };
 
@@ -96,6 +105,12 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [timeEnd, setTimeEnd] = useState("20:00");
   /** 確定は成功したがカレンダー未連携・API 失敗など */
   const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
+  const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
+  const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
+  const [calendarBusy, setCalendarBusy] = useState<{ start: string; end: string }[]>([]);
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+
   useEffect(() => {
     let c = true;
     params.then((p) => {
@@ -133,6 +148,51 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   useEffect(() => {
     load();
   }, [load]);
+
+  const sessionFingerprint = useCallback(async () => {
+    if (!id) return "";
+    const res = await fetch(`/api/sessions/${id}`, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!res.ok) return `err:${res.status}`;
+    const data = (await res.json().catch(() => ({}))) as { session?: Session };
+    const s = data.session;
+    if (!s) return "empty";
+    return [
+      s.status,
+      s.slots?.length ?? 0,
+      (s.organizerRound1Ids ?? []).join(","),
+      (s.organizerFinalIds ?? []).join(","),
+      (s.participantPreferredSlotIds ?? []).join(","),
+      (s.organizerPreferredSlotIds ?? []).join(","),
+      s.inviteEmailSentAt ?? "",
+      s.scheduleInviteSentAt ?? "",
+      String(s.calendarCreated ?? ""),
+      (s.calendarMeetLinks ?? []).join(","),
+      (s.createdEventIds ?? []).join(","),
+    ].join("|");
+  }, [id]);
+
+  useMsaPollRefresh(sessionFingerprint, load, {
+    intervalMs: 15_000,
+    enabled: Boolean(id),
+    resetKey: id,
+  });
+
+  useEffect(() => {
+    if (!session || session.status !== "awaiting_organizer_round1" || session.slots.length > 0) {
+      return;
+    }
+    void (async () => {
+      const r = await fetch("/api/google/calendar/status", { credentials: "include", cache: "no-store" });
+      const j = (await r.json().catch(() => ({}))) as { connected?: boolean };
+      setGoogleConnected(Boolean(j.connected));
+      const dr = await fetch("/api/msa/day-remember", { credentials: "include", cache: "no-store" });
+      const dj = (await dr.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
+      setSuggestions(dj.suggestions ?? []);
+    })();
+  }, [session?.id, session?.status, session?.slots?.length]);
 
   const slotById = useMemo(() => {
     if (!session?.slots?.length) return new Map<string, Slot>();
@@ -199,6 +259,70 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     await patch({ action: "send_schedule_invite" });
   }
 
+  function applySuggestionSession(s: DayRememberSuggestion) {
+    const sorted = [...(session?.candidateDates ?? [])].sort();
+    const ymd = firstYmdMatchingWeekday(sorted, s.dow);
+    if (!ymd) {
+      setError("この曜日に該当する日付がありません。");
+      return;
+    }
+    setPickedDates(new Set([ymd]));
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const sh = Math.floor(s.startMin / 60);
+    const sm = s.startMin % 60;
+    const eh = Math.floor(s.endMin / 60);
+    const em = s.endMin % 60;
+    setTimeStart(`${pad(sh)}:${pad(sm)}`);
+    setTimeEnd(`${pad(eh)}:${pad(em)}`);
+    setError(null);
+  }
+
+  async function confirmBuildSlots() {
+    if (!session) return;
+    if (pickedDates.size === 0) {
+      setError("日付を1つ以上選んでください");
+      return;
+    }
+    if (!googleConnected) {
+      setError("設定で Google カレンダーと連携してください。");
+      return;
+    }
+    const dates = Array.from(pickedDates).sort();
+    const from = DateTime.fromISO(dates[0], { zone: TIMEZONE }).startOf("day").toISO()!;
+    const to = DateTime.fromISO(dates[dates.length - 1], { zone: TIMEZONE }).endOf("day").toISO()!;
+    const br = await fetch(
+      `/api/google/calendar/busy?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { credentials: "include", cache: "no-store" },
+    );
+    if (!br.ok) {
+      setError("Google カレンダーの予定を取得できませんでした。");
+      return;
+    }
+    const bj = (await br.json().catch(() => ({}))) as { busy?: { start: string; end: string }[] };
+    const busy = bj.busy ?? [];
+    setCalendarBusy(busy);
+    for (const ymd of dates) {
+      if (ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, busy)) {
+        setError(
+          `${ymd} の時間帯が Google カレンダーの予定と重なっています。空いている時間に変更してください。`,
+        );
+        return;
+      }
+    }
+    setError(null);
+    await patch({
+      action: "build_slots",
+      dates,
+      timeStart,
+      timeEnd,
+    });
+  }
+
+  const eligibleSet = useMemo(
+    () => new Set(session?.candidateDates ?? []),
+    [session?.candidateDates],
+  );
+
   if (!id || !session) {
     return (
       <div className="flex flex-1 flex-col justify-center text-sm text-zinc-500">
@@ -235,29 +359,43 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       {needsBuild && (
         <div className="flex flex-col gap-4">
+          {googleConnected === false && (
+            <p className="rounded-xl border border-amber-700/50 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
+              日程の候補を作る前に{" "}
+              <Link href="/settings" className="font-medium underline">
+                Google カレンダー連携
+              </Link>
+              を完了してください。
+            </p>
+          )}
+          {googleConnected === null && (
+            <p className="text-xs text-zinc-500">連携状態を確認しています…</p>
+          )}
           <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
-            <h2 className="text-sm font-semibold text-zinc-100">1. 日付を選ぶ</h2>
+            <h2 className="text-sm font-semibold text-zinc-100">1. 日付を選ぶ（1年分・週／月）</h2>
             <p className="mt-1 text-xs text-zinc-400">参加できる日を複数選べます。</p>
-            <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">
-              {candidateDates.map((ymd) => (
-                <li key={ymd}>
-                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-600 bg-zinc-950/80 px-3 py-2 text-zinc-100">
-                    <input
-                      type="checkbox"
-                      checked={pickedDates.has(ymd)}
-                      onChange={() => toggleDate(ymd)}
-                      className="accent-teal-600"
-                    />
-                    <span className="text-sm">{ymd}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
+            {googleConnected !== false && (
+              <div className="mt-3">
+                <OrganizerCalendarPicker
+                  eligibleYmd={eligibleSet}
+                  selectedYmd={pickedDates}
+                  onToggleYmd={toggleDate}
+                  viewMode={viewMode}
+                  onViewModeChange={setViewMode}
+                  anchor={anchor}
+                  onAnchorChange={setAnchor}
+                  suggestions={suggestions}
+                  onApplySuggestion={applySuggestionSession}
+                />
+              </div>
+            )}
           </section>
 
           <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
             <h2 className="text-sm font-semibold text-zinc-100">2. 時間帯（開始 — 終了）</h2>
-            <p className="mt-1 text-xs text-zinc-400">選んだ日に同じ時間帯を適用します（JST）。</p>
+            <p className="mt-1 text-xs text-zinc-400">
+              選んだ日に同じ時間帯を適用します（JST）。Google カレンダーに予定がある時間は選べません。
+            </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <label className="flex flex-col gap-1 text-xs text-zinc-400">
                 開始
@@ -279,17 +417,19 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                 />
               </label>
             </div>
+            {pickedDates.size > 0 &&
+              calendarBusy.length > 0 &&
+              Array.from(pickedDates).some((ymd) =>
+                ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, calendarBusy),
+              ) && (
+                <p className="mt-2 text-xs text-amber-300">
+                  選択中の時間帯が Google カレンダーの予定と重なっています。「候補を作成」前に調整してください。
+                </p>
+              )}
             <button
               type="button"
-              disabled={pending || pickedDates.size === 0}
-              onClick={() =>
-                patch({
-                  action: "build_slots",
-                  dates: Array.from(pickedDates).sort(),
-                  timeStart,
-                  timeEnd,
-                })
-              }
+              disabled={pending || pickedDates.size === 0 || googleConnected === false}
+              onClick={() => void confirmBuildSlots()}
               className="mt-4 w-full rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
               候補を作成

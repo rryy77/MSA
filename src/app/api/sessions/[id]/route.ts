@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/appUrl";
 import { getMsaConfig } from "@/lib/msaConfig";
 import { getMsaSessionFromCookies } from "@/lib/msaSession";
-import { getSelectableDatesJst } from "@/lib/dateRange";
+import { getSelectableDatesJstYear } from "@/lib/dateRange";
 import { buildParticipantInvitePayload } from "@/lib/mailer";
 import { applyGoogleCalendarToSession } from "@/lib/googleCalendarFinalize";
-import { insertInviteNotification } from "@/lib/inviteInbox";
+import { insertInviteNotification, maxIsoEndFromSlots } from "@/lib/inviteInbox";
 import { buildSlotsDetailed, buildSlotsFromSchedule } from "@/lib/slots";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { getSession } from "@/lib/store";
@@ -91,6 +91,9 @@ async function notifyOrganizerSessionFinalized(
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+    const finSlots = sessionP.organizerFinalIds
+      .map((id) => sessionP.slots.find((x) => x.id === id))
+      .filter((x): x is NonNullable<typeof x> => Boolean(x));
     await insertInviteNotification({
       sessionId: sessionP.id,
       recipientUserId: cfg.organizerId,
@@ -99,6 +102,7 @@ async function notifyOrganizerSessionFinalized(
       textBody: lineText,
       htmlBody: `<pre style="white-space:pre-wrap;font-family:inherit">${safeHtml}</pre><p><a href="${sessionUrl}">セッションを開く</a></p>`,
       inviteUrl: sessionUrl,
+      expiresAt: maxIsoEndFromSlots(finSlots),
     });
   } catch (e) {
     console.error("organizer_finalize_inbox", e);
@@ -107,7 +111,7 @@ async function notifyOrganizerSessionFinalized(
 
 function withDefaults(s: Session): Session {
   const candidateDates =
-    s.candidateDates?.length ? s.candidateDates : getSelectableDatesJst(new Date(s.triggerAt));
+    s.candidateDates?.length ? s.candidateDates : getSelectableDatesJstYear(new Date(s.triggerAt));
   return { ...s, candidateDates };
 }
 
@@ -393,6 +397,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         textBody: payload.text,
         htmlBody: payload.html,
         inviteUrl: respondUrl,
+        expiresAt: maxIsoEndFromSlots(session.slots),
       });
     } catch (e) {
       console.error(e);
@@ -470,6 +475,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         textBody: payload.text,
         htmlBody: payload.html,
         inviteUrl,
+        expiresAt: maxIsoEndFromSlots(session.slots),
       });
     } catch (e) {
       console.error(e);

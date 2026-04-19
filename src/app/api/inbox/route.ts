@@ -11,6 +11,13 @@ export async function GET() {
     return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
   }
 
+  const nowIso = new Date().toISOString();
+  await service
+    .from("invite_notifications")
+    .delete()
+    .eq("recipient_user_id", auth.ok.msa.uid)
+    .lt("expires_at", nowIso);
+
   const { data, error } = await service
     .from("invite_notifications")
     .select(

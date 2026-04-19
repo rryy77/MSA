@@ -1,3 +1,4 @@
+import { recordDayRememberSlots } from "@/lib/dayRemember";
 import { fetchGoogleCalendarRefreshToken } from "@/lib/inviteInbox";
 import type { Session } from "@/lib/types";
 import type { Slot } from "@/lib/slots";
@@ -54,6 +55,7 @@ export async function applyGoogleCalendarToSession(
     session.calendarCreated = true;
     session.createdEventIds = eventIds;
     session.calendarMeetLinks = meetLinks;
+    void recordDayRememberSlots(userId, slots);
     return {};
   } catch (e) {
     console.error("applyGoogleCalendarToSession", e);

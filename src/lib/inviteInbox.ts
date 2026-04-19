@@ -1,5 +1,11 @@
 import { createServiceRoleClient } from "@/lib/supabase/service";
 
+/** 予定の終了時刻を過ぎた受信トレイ行を削除するために使う（最大の slot.end の ISO） */
+export function maxIsoEndFromSlots(slots: { end: string }[]): string | undefined {
+  if (!slots.length) return undefined;
+  return slots.reduce((a, s) => (s.end > a ? s.end : a), slots[0].end);
+}
+
 /** RLS を避けるため service_role のみで挿入（MSA ログインは Supabase Auth を使わない） */
 export async function insertInviteNotification(input: {
   sessionId: string;
@@ -9,6 +15,8 @@ export async function insertInviteNotification(input: {
   textBody: string;
   htmlBody: string;
   inviteUrl: string;
+  /** この時刻を過ぎたら一覧 API で自動削除（未指定なら削除されない） */
+  expiresAt?: string;
 }): Promise<void> {
   const service = createServiceRoleClient();
   if (!service) {
@@ -22,6 +30,7 @@ export async function insertInviteNotification(input: {
     text_body: input.textBody,
     html_body: input.htmlBody,
     invite_url: input.inviteUrl,
+    expires_at: input.expiresAt ?? null,
   });
   if (error) throw new Error(`invite_inbox: ${error.message}`);
 }

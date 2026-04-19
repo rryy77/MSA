@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useMsaPollRefresh } from "@/hooks/useMsaPollRefresh";
 
 type Summary = {
   id: string;
@@ -116,6 +117,34 @@ export default function MessagePage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const inboxSessionsFingerprint = useCallback(async () => {
+    const inboxR = await fetch("/api/inbox", { cache: "no-store", credentials: "include" });
+    let inboxPart = "inbox:err";
+    if (inboxR.ok) {
+      const j = (await inboxR.json().catch(() => ({}))) as { items?: InboxRow[] };
+      const items = j.items ?? [];
+      inboxPart = items
+        .map((i) => `${i.id}:${i.read_at ?? ""}:${i.created_at}`)
+        .sort()
+        .join("|");
+    }
+    const sessR = await fetch("/api/sessions", { cache: "no-store", credentials: "include" });
+    let sessPart = `sess:${sessR.status}`;
+    if (sessR.ok) {
+      const j = (await sessR.json().catch(() => ({}))) as { sessions?: Summary[] };
+      const sessions = j.sessions ?? [];
+      sessPart = sessions
+        .map((s) => `${s.id}:${s.status}:${s.triggerAt}`)
+        .sort()
+        .join("|");
+    }
+    return `${inboxPart}##${sessPart}`;
+  }, []);
+
+  useMsaPollRefresh(inboxSessionsFingerprint, load, {
+    intervalMs: 15_000,
+  });
 
   async function markRead(id: string) {
     try {
