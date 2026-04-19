@@ -17,14 +17,18 @@ export function getGoogleCalendarRedirectUri(): string {
  */
 function getOriginFromRequest(request: Request): string {
   const url = new URL(request.url);
-  const host =
-    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
-    request.headers.get("host")?.split(",")[0]?.trim() ||
-    url.host;
-  let proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  if (!proto) {
-    proto = url.protocol === "https:" ? "https" : "http";
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+
+  // Vercel 等: 必ず x-forwarded-* を優先（request.url が内部 URL になることがある）
+  if (forwardedHost) {
+    const proto = forwardedProto || "https";
+    return `${proto}://${forwardedHost}`;
   }
+
+  const host = request.headers.get("host")?.split(",")[0]?.trim() || url.host;
+  const proto =
+    forwardedProto || (url.protocol === "https:" ? "https" : "http");
   return `${proto}://${host}`;
 }
 

@@ -15,6 +15,11 @@ export async function GET(request: Request) {
   if ("error" in auth) return auth.error;
 
   const redirectUri = getGoogleCalendarRedirectUriForRequest(request);
+  if (process.env.GOOGLE_CALENDAR_REDIRECT_URI?.trim()) {
+    console.info("[google-calendar-oauth] redirect_uri from GOOGLE_CALENDAR_REDIRECT_URI env");
+  } else {
+    console.info("[google-calendar-oauth] redirect_uri:", redirectUri);
+  }
   const oauth2 = getGoogleOAuthClientForRedirect(redirectUri);
   if (!oauth2) {
     return NextResponse.json({ error: "google_oauth_not_configured" }, { status: 503 });
