@@ -8,8 +8,13 @@ import {
   type CalendarViewMode,
 } from "@/components/msa/OrganizerCalendarPicker";
 import { useMsaPollRefresh } from "@/hooks/useMsaPollRefresh";
+import { filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
 import { TIMEZONE } from "@/lib/constants";
-import { firstYmdMatchingWeekday, type DayRememberSuggestion } from "@/lib/dayRemember";
+import {
+  firstYmdMatchingWeekdaySkippingBlocked,
+  type DayRememberSuggestion,
+} from "@/lib/dayRemember";
+import { fetchGoogleCalendarBusyMerged } from "@/lib/fetchGoogleCalendarBusyRange";
 import { ymdRangeOverlapsBusy } from "@/lib/organizerBusyCheck";
 
 type Slot = { id: string; label: string; start: string; end: string };
@@ -110,6 +115,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
   const [calendarBusy, setCalendarBusy] = useState<{ start: string; end: string }[]>([]);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+  const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
+  const [busyPickLoading, setBusyPickLoading] = useState(false);
+  const [pickStepBusy, setPickStepBusy] = useState<{ start: string; end: string }[]>([]);
+  const [highlightedSuggestionRank, setHighlightedSuggestionRank] = useState<1 | 2 | 3 | null>(null);
 
   useEffect(() => {
     let c = true;
@@ -194,12 +203,55 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     })();
   }, [session?.id, session?.status, session?.slots?.length]);
 
+  const needsBuildEarly =
+    session?.status === "awaiting_organizer_round1" && (session?.slots?.length ?? 0) === 0;
+
+  useEffect(() => {
+    const dates = session?.candidateDates;
+    if (!needsBuildEarly || !dates?.length || googleConnected !== true) {
+      setCalendarBlockedYmd(new Set());
+      setPickStepBusy([]);
+      return;
+    }
+    let cancelled = false;
+    setBusyPickLoading(true);
+    void (async () => {
+      try {
+        const sorted = [...dates].sort();
+        const from = DateTime.fromISO(sorted[0], { zone: TIMEZONE }).startOf("day").toISO()!;
+        const to = DateTime.fromISO(sorted[sorted.length - 1], { zone: TIMEZONE }).endOf("day").toISO()!;
+        const busy = await fetchGoogleCalendarBusyMerged(from, to);
+        if (cancelled) return;
+        setPickStepBusy(busy);
+        setCalendarBlockedYmd(filterYmdWithNoFreeWindow(dates, busy, 30));
+      } catch {
+        if (!cancelled) {
+          setCalendarBlockedYmd(new Set());
+          setPickStepBusy([]);
+        }
+      } finally {
+        if (!cancelled) setBusyPickLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsBuildEarly, session?.candidateDates, session?.id, googleConnected]);
+
+  useEffect(() => {
+    setPickedDates((prev) => {
+      const next = new Set([...prev].filter((ymd) => !calendarBlockedYmd.has(ymd)));
+      return next.size === prev.size && [...next].every((y) => prev.has(y)) ? prev : next;
+    });
+  }, [calendarBlockedYmd]);
+
   const slotById = useMemo(() => {
     if (!session?.slots?.length) return new Map<string, Slot>();
     return new Map(session.slots.map((s) => [s.id, s]));
   }, [session]);
 
   function toggleDate(ymd: string) {
+    setHighlightedSuggestionRank(null);
     setPickedDates((prev) => {
       const n = new Set(prev);
       if (n.has(ymd)) n.delete(ymd);
@@ -261,19 +313,29 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
   function applySuggestionSession(s: DayRememberSuggestion) {
     const sorted = [...(session?.candidateDates ?? [])].sort();
-    const ymd = firstYmdMatchingWeekday(sorted, s.dow);
+    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
     if (!ymd) {
-      setError("この曜日に該当する日付がありません。");
+      setError("この曜日で選べる空き日がありません（Google カレンダーの予定で埋まっています）。");
       return;
     }
-    setPickedDates(new Set([ymd]));
     const pad = (n: number) => String(n).padStart(2, "0");
     const sh = Math.floor(s.startMin / 60);
     const sm = s.startMin % 60;
     const eh = Math.floor(s.endMin / 60);
     const em = s.endMin % 60;
-    setTimeStart(`${pad(sh)}:${pad(sm)}`);
-    setTimeEnd(`${pad(eh)}:${pad(em)}`);
+    const startStr = `${pad(sh)}:${pad(sm)}`;
+    const endStr = `${pad(eh)}:${pad(em)}`;
+    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
+      setHighlightedSuggestionRank(s.rank);
+      setError(
+        "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、手動で調整してください。",
+      );
+      return;
+    }
+    setHighlightedSuggestionRank(s.rank);
+    setPickedDates(new Set([ymd]));
+    setTimeStart(startStr);
+    setTimeEnd(endStr);
     setError(null);
   }
 
@@ -334,6 +396,14 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const needsBuild = session.status === "awaiting_organizer_round1" && session.slots.length === 0;
   const candidateDates = session.candidateDates ?? [];
 
+  const busyHintForTime = pickStepBusy.length > 0 ? pickStepBusy : calendarBusy;
+  const timeOverlapWarning =
+    pickedDates.size > 0 &&
+    busyHintForTime.length > 0 &&
+    Array.from(pickedDates).some((ymd) =>
+      ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, busyHintForTime),
+    );
+
   return (
     <div className="flex flex-1 flex-col gap-5 pb-4">
       <Link href="/" className="text-sm text-teal-700 hover:underline dark:text-teal-400">
@@ -373,11 +443,19 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           )}
           <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
             <h2 className="text-sm font-semibold text-zinc-100">1. 日付を選ぶ（1年分・週／月）</h2>
-            <p className="mt-1 text-xs text-zinc-400">参加できる日を複数選べます。</p>
+            <p className="mt-1 text-xs text-zinc-400">
+              参加できる日を複数選べます。Google カレンダーで
+              <span className="text-orange-200/90">30分以上の空きが無い日</span>
+              はオレンジ色で選べません。
+            </p>
+            {busyPickLoading && googleConnected === true && (
+              <p className="mt-2 text-xs text-zinc-500">Google カレンダーの空き状況を取得しています…</p>
+            )}
             {googleConnected !== false && (
               <div className="mt-3">
                 <OrganizerCalendarPicker
                   eligibleYmd={eligibleSet}
+                  calendarBlockedYmd={calendarBlockedYmd}
                   selectedYmd={pickedDates}
                   onToggleYmd={toggleDate}
                   viewMode={viewMode}
@@ -386,6 +464,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                   onAnchorChange={setAnchor}
                   suggestions={suggestions}
                   onApplySuggestion={applySuggestionSession}
+                  highlightedSuggestionRank={highlightedSuggestionRank}
                 />
               </div>
             )}
@@ -402,7 +481,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                 <input
                   type="time"
                   value={timeStart}
-                  onChange={(e) => setTimeStart(e.target.value)}
+                  onChange={(e) => {
+                    setHighlightedSuggestionRank(null);
+                    setTimeStart(e.target.value);
+                  }}
                   className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
                 />
               </label>
@@ -412,16 +494,15 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                 <input
                   type="time"
                   value={timeEnd}
-                  onChange={(e) => setTimeEnd(e.target.value)}
+                  onChange={(e) => {
+                    setHighlightedSuggestionRank(null);
+                    setTimeEnd(e.target.value);
+                  }}
                   className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
                 />
               </label>
             </div>
-            {pickedDates.size > 0 &&
-              calendarBusy.length > 0 &&
-              Array.from(pickedDates).some((ymd) =>
-                ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, calendarBusy),
-              ) && (
+            {timeOverlapWarning && (
                 <p className="mt-2 text-xs text-amber-300">
                   選択中の時間帯が Google カレンダーの予定と重なっています。「候補を作成」前に調整してください。
                 </p>

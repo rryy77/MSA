@@ -18,6 +18,8 @@ function mondayOfWeekContaining(d: DateTime): DateTime {
 
 type Props = {
   eligibleYmd: Set<string>;
+  /** Google カレンダー上、十分な空きが無いため選べない日（eligible の一部） */
+  calendarBlockedYmd?: Set<string>;
   selectedYmd: Set<string>;
   onToggleYmd: (ymd: string) => void;
   viewMode: CalendarViewMode;
@@ -26,10 +28,13 @@ type Props = {
   onAnchorChange: (d: DateTime) => void;
   suggestions?: DayRememberSuggestion[];
   onApplySuggestion?: (s: DayRememberSuggestion) => void;
+  /** 第1〜第3のどれを選んだか表示（光らせる） */
+  highlightedSuggestionRank?: 1 | 2 | 3 | null;
 };
 
 export function OrganizerCalendarPicker({
   eligibleYmd,
+  calendarBlockedYmd,
   selectedYmd,
   onToggleYmd,
   viewMode,
@@ -38,7 +43,10 @@ export function OrganizerCalendarPicker({
   onAnchorChange,
   suggestions,
   onApplySuggestion,
+  highlightedSuggestionRank,
 }: Props) {
+  const blocked = calendarBlockedYmd ?? new Set<string>();
+
   const weekDays = useMemo(() => {
     const mon = mondayOfWeekContaining(anchor);
     return Array.from({ length: 7 }, (_, i) => mon.plus({ days: i }));
@@ -59,27 +67,38 @@ export function OrganizerCalendarPicker({
   return (
     <div className="flex flex-col gap-4">
       {suggestions && suggestions.length > 0 && onApplySuggestion && (
-        <div className="rounded-2xl border border-teal-800/60 bg-teal-950/30 p-3 ring-1 ring-teal-900/50">
-          <p className="text-xs font-semibold text-teal-200/90">DAYREMEMBER（第1〜第3候補）</p>
-          <p className="mt-1 text-[11px] text-zinc-500">
-            過去に Google カレンダーへ追加した枠から、よく使う曜日・時間帯を提案します。
+        <div className="rounded-2xl border border-zinc-600/80 bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
+          <p className="text-[13px] leading-snug text-zinc-400">
+            よく使う曜日・時間を提案しています。タップで日付と時間に反映されます。
           </p>
-          <ul className="mt-2 flex flex-col gap-1.5">
-            {suggestions.map((s) => (
-              <li key={`${s.rank}-${s.dow}-${s.startMin}`}>
-                <button
-                  type="button"
-                  onClick={() => onApplySuggestion(s)}
-                  className="w-full rounded-lg border border-teal-700/50 bg-zinc-900/80 px-3 py-2 text-left text-xs text-zinc-200 transition hover:border-teal-500 hover:bg-teal-950/50"
-                >
-                  <span className="font-medium text-teal-300">第{s.rank}候補</span>
-                  <span className="ml-2">{s.label}</span>
-                  {s.fromHistory && (
-                    <span className="ml-2 text-[10px] text-zinc-500">（履歴）</span>
-                  )}
-                </button>
-              </li>
-            ))}
+          <ul className="mt-4 flex flex-col gap-3">
+            {suggestions.map((s) => {
+              const active = highlightedSuggestionRank === s.rank;
+              return (
+                <li key={`${s.rank}-${s.dow}-${s.startMin}`}>
+                  <button
+                    type="button"
+                    onClick={() => onApplySuggestion(s)}
+                    className={
+                      "w-full rounded-xl border px-4 py-4 text-left text-sm leading-relaxed transition " +
+                      (active
+                        ? "border-amber-400/90 bg-amber-950/50 text-zinc-50 shadow-[0_0_28px_rgba(251,191,36,0.38)] ring-2 ring-amber-400/85"
+                        : "border-zinc-600/80 bg-zinc-950/80 text-zinc-200 hover:border-teal-500/60 hover:bg-teal-950/30")
+                    }
+                  >
+                    <span className="font-semibold text-teal-300">第{s.rank}候補</span>
+                    <span className="ml-2 block min-[400px]:ml-2 min-[400px]:inline">
+                      {s.label}
+                    </span>
+                    {s.fromHistory && (
+                      <span className="mt-1 block text-xs text-zinc-500 min-[400px]:ml-2 min-[400px]:inline">
+                        （過去のカレンダー反映から）
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -153,22 +172,31 @@ export function OrganizerCalendarPicker({
         <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
           {weekDays.map((d) => {
             const ymd = d.toISODate()!;
-            const eligible = eligibleYmd.has(ymd);
+            const inEligible = eligibleYmd.has(ymd);
+            const isBlocked = blocked.has(ymd);
+            const canSelect = inEligible && !isBlocked;
             const sel = selectedYmd.has(ymd);
+            const title = !inEligible
+              ? "この日は候補の対象外です"
+              : isBlocked
+                ? "Google カレンダーの予定があり、この日は30分以上の空きがありません"
+                : undefined;
             return (
               <button
                 key={ymd}
                 type="button"
-                disabled={!eligible}
-                onClick={() => eligible && onToggleYmd(ymd)}
-                title={!eligible ? "この日は選択範囲外です" : undefined}
+                disabled={!canSelect}
+                title={title}
+                onClick={() => canSelect && onToggleYmd(ymd)}
                 className={
-                  "flex min-h-[4.25rem] flex-col items-center justify-center rounded-xl border px-1 py-2 text-center text-[11px] font-semibold sm:text-xs " +
-                  (!eligible
+                  "flex min-h-[4.75rem] flex-col items-center justify-center rounded-xl border px-1 py-2.5 text-center text-[11px] font-semibold sm:min-h-[5rem] sm:text-xs " +
+                  (!inEligible
                     ? "cursor-not-allowed border-zinc-800 bg-zinc-950/50 text-zinc-600"
-                    : sel
-                      ? "border-sky-500 bg-sky-600/30 text-sky-100"
-                      : "border-zinc-600 bg-zinc-800 text-zinc-200 hover:border-zinc-500")
+                    : isBlocked
+                      ? "cursor-not-allowed border-orange-900/50 bg-orange-950/25 text-orange-200/70"
+                      : sel
+                        ? "border-sky-500 bg-sky-600/30 text-sky-100 shadow-[0_0_12px_rgba(56,189,248,0.25)]"
+                        : "border-zinc-600 bg-zinc-800 text-zinc-200 hover:border-zinc-500")
                 }
               >
                 <span className="text-[10px] text-zinc-500">{WD_SHORT[d.weekday - 1]}</span>
@@ -190,23 +218,35 @@ export function OrganizerCalendarPicker({
             {monthGrid.cells.map((d) => {
               const ymd = d.toISODate()!;
               const inMonth = d.month === anchor.month;
-              const eligible = eligibleYmd.has(ymd);
+              const inEligible = eligibleYmd.has(ymd);
+              const isBlocked = blocked.has(ymd);
+              const canSelect = inEligible && !isBlocked && inMonth;
               const sel = selectedYmd.has(ymd);
+              const title = !inMonth
+                ? undefined
+                : !inEligible
+                  ? "候補の対象外です"
+                  : isBlocked
+                    ? "Google カレンダーで空きがありません"
+                    : undefined;
               return (
                 <button
                   key={`${ymd}-m`}
                   type="button"
-                  disabled={!eligible || !inMonth}
-                  onClick={() => eligible && inMonth && onToggleYmd(ymd)}
+                  disabled={!inMonth || !inEligible || isBlocked}
+                  title={title}
+                  onClick={() => canSelect && onToggleYmd(ymd)}
                   className={
-                    "flex h-10 items-center justify-center rounded-lg border text-xs font-semibold sm:h-11 " +
+                    "flex h-11 items-center justify-center rounded-lg border text-xs font-semibold sm:h-12 " +
                     (!inMonth
                       ? "cursor-default border-transparent text-zinc-700 opacity-40"
-                      : !eligible
+                      : !inEligible
                         ? "cursor-not-allowed border-transparent text-zinc-700"
-                        : sel
-                          ? "border-sky-500 bg-sky-600/30 text-sky-100"
-                          : "border-transparent bg-zinc-800/80 text-zinc-200 hover:border-zinc-500")
+                        : isBlocked
+                          ? "cursor-not-allowed border-orange-900/40 bg-orange-950/20 text-orange-200/80"
+                          : sel
+                            ? "border-sky-500 bg-sky-600/30 text-sky-100 shadow-[0_0_10px_rgba(56,189,248,0.2)]"
+                            : "border-transparent bg-zinc-800/80 text-zinc-200 hover:border-zinc-500")
                   }
                 >
                   {d.day}

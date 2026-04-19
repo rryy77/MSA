@@ -180,6 +180,20 @@ export function firstYmdMatchingWeekday(eligibleSorted: string[], dow: number): 
   return undefined;
 }
 
+/** 曜日が一致し、かつ Google カレンダーで空きがないために除外された日を除く */
+export function firstYmdMatchingWeekdaySkippingBlocked(
+  eligibleSorted: string[],
+  dow: number,
+  calendarBlockedYmd: Set<string>,
+): string | undefined {
+  for (const ymd of eligibleSorted) {
+    if (calendarBlockedYmd.has(ymd)) continue;
+    const d = DateTime.fromISO(ymd, { zone: TIMEZONE });
+    if (d.isValid && d.weekday === dow) return ymd;
+  }
+  return undefined;
+}
+
 export async function fetchDayRememberEntries(userId: string): Promise<DayRememberEntry[]> {
   const service = createServiceRoleClient();
   if (!service) return [];

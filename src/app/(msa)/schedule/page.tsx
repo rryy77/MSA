@@ -9,11 +9,13 @@ import {
   type CalendarViewMode,
 } from "@/components/msa/OrganizerCalendarPicker";
 import { TIMEZONE } from "@/lib/constants";
+import { filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
 import {
-  firstYmdMatchingWeekday,
+  firstYmdMatchingWeekdaySkippingBlocked,
   type DayRememberSuggestion,
 } from "@/lib/dayRemember";
 import { getSelectableDatesJstYear } from "@/lib/dateRange";
+import { fetchGoogleCalendarBusyMerged } from "@/lib/fetchGoogleCalendarBusyRange";
 import { ymdRangeOverlapsBusy } from "@/lib/organizerBusyCheck";
 
 const WD_LABEL = ["", "月", "火", "水", "木", "金", "土", "日"];
@@ -40,6 +42,12 @@ function ScheduleWizard() {
   const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+  /** 30分以上の空きが無い日（Google 予定で埋まっている） */
+  const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
+  const [busyPickLoading, setBusyPickLoading] = useState(false);
+  /** 日付除外計算用の FreeBusy（候補タップ時の重なり判定にも使用） */
+  const [pickStepBusy, setPickStepBusy] = useState<{ start: string; end: string }[]>([]);
+  const [highlightedSuggestionRank, setHighlightedSuggestionRank] = useState<1 | 2 | 3 | null>(null);
 
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -107,7 +115,46 @@ function ScheduleWizard() {
     })();
   }, [step]);
 
+  useEffect(() => {
+    if (step !== "pickDates" || !eligibleDates.length || !googleConnected) {
+      setCalendarBlockedYmd(new Set());
+      setPickStepBusy([]);
+      return;
+    }
+    let cancelled = false;
+    setBusyPickLoading(true);
+    void (async () => {
+      try {
+        const sorted = [...eligibleDates].sort();
+        const from = DateTime.fromISO(sorted[0], { zone: TIMEZONE }).startOf("day").toISO()!;
+        const to = DateTime.fromISO(sorted[sorted.length - 1], { zone: TIMEZONE }).endOf("day").toISO()!;
+        const busy = await fetchGoogleCalendarBusyMerged(from, to);
+        if (cancelled) return;
+        setPickStepBusy(busy);
+        setCalendarBlockedYmd(filterYmdWithNoFreeWindow(eligibleDates, busy, 30));
+      } catch {
+        if (!cancelled) {
+          setCalendarBlockedYmd(new Set());
+          setPickStepBusy([]);
+        }
+      } finally {
+        if (!cancelled) setBusyPickLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, eligibleDates, googleConnected]);
+
+  useEffect(() => {
+    setSelectedYmd((prev) => {
+      const next = new Set([...prev].filter((ymd) => !calendarBlockedYmd.has(ymd)));
+      return next.size === prev.size && [...next].every((y) => prev.has(y)) ? prev : next;
+    });
+  }, [calendarBlockedYmd]);
+
   function toggleYmd(ymd: string) {
+    setHighlightedSuggestionRank(null);
     setSelectedYmd((prev) => {
       const n = new Set(prev);
       if (n.has(ymd)) n.delete(ymd);
@@ -129,24 +176,35 @@ function ScheduleWizard() {
     }
     setGoogleConnected(true);
     setSelectedYmd(new Set());
+    setHighlightedSuggestionRank(null);
     setStep("pickDates");
   }
 
   function applySuggestion(s: DayRememberSuggestion) {
     const sorted = [...eligibleDates].sort();
-    const ymd = firstYmdMatchingWeekday(sorted, s.dow);
+    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
     if (!ymd) {
-      setError("この曜日に該当する日付が候補（1年分）にありません。");
+      setError("この曜日で選べる空き日がありません（Google カレンダーの予定で埋まっています）。");
       return;
     }
-    setSelectedYmd(new Set([ymd]));
     const pad = (n: number) => String(n).padStart(2, "0");
     const sh = Math.floor(s.startMin / 60);
     const sm = s.startMin % 60;
     const eh = Math.floor(s.endMin / 60);
     const em = s.endMin % 60;
+    const startStr = `${pad(sh)}:${pad(sm)}`;
+    const endStr = `${pad(eh)}:${pad(em)}`;
+    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
+      setHighlightedSuggestionRank(s.rank);
+      setError(
+        "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、カレンダーを調整してから手動で選んでください。",
+      );
+      return;
+    }
+    setHighlightedSuggestionRank(s.rank);
+    setSelectedYmd(new Set([ymd]));
     setTimes({
-      [ymd]: { start: `${pad(sh)}:${pad(sm)}`, end: `${pad(eh)}:${pad(em)}` },
+      [ymd]: { start: startStr, end: endStr },
     });
     setError(null);
   }
@@ -189,6 +247,7 @@ function ScheduleWizard() {
   }
 
   function setRange(ymd: string, field: "start" | "end", value: string) {
+    setHighlightedSuggestionRank(null);
     setTimes((prev) => ({
       ...prev,
       [ymd]: { ...prev[ymd], [field]: value },
@@ -357,11 +416,17 @@ function ScheduleWizard() {
           </header>
           <p className="text-sm text-zinc-400">
             開始日を含む<strong className="text-zinc-200">1年分</strong>
-            の日付から選べます。週／月表示を切り替えてください（初期は週）。
+            から選べます。Google カレンダーに予定があり、
+            <strong className="text-zinc-200">30分以上の連続空きが無い日</strong>
+            はオレンジ色で選べません。
           </p>
+          {busyPickLoading && (
+            <p className="text-xs text-zinc-500">Google カレンダーの空き状況を取得しています…</p>
+          )}
           {error && <p className="text-sm text-red-400">{error}</p>}
           <OrganizerCalendarPicker
             eligibleYmd={eligibleSet}
+            calendarBlockedYmd={calendarBlockedYmd}
             selectedYmd={selectedYmd}
             onToggleYmd={toggleYmd}
             viewMode={viewMode}
@@ -370,6 +435,7 @@ function ScheduleWizard() {
             onAnchorChange={setAnchor}
             suggestions={suggestions}
             onApplySuggestion={applySuggestion}
+            highlightedSuggestionRank={highlightedSuggestionRank}
           />
           <button
             type="button"
