@@ -84,7 +84,26 @@ export default function SettingsPage() {
       }
       setCalMsg("Google カレンダーと連携しました。日程確定時に Meet 付きでイベントが作成されます。");
     } else if (cal === "error") {
-      setCalMsg("連携に失敗しました。もう一度お試しください。");
+      const reason = params.get("reason") ?? "";
+      const detail = params.get("detail") ?? "";
+      const hint =
+        reason === "access_denied"
+          ? "Google の同意画面で「許可」が選ばれなかったか、キャンセルされました。"
+          : reason === "admin_policy_enforced"
+            ? "組織（Google Workspace）の管理者が、未検証アプリや外部アプリをブロックしている可能性があります。管理者に確認するか、個人の Google アカウントで試してください。"
+            : reason === "org_internal"
+              ? "この OAuth クライアントは「内部」向けです。一般の Gmail では使えません。Google Cloud の OAuth クライアント種別を確認してください。"
+              : reason === "invalid_client" || reason === "unauthorized_client"
+                ? "クライアント ID / シークレットが Google Console の認証情報と一致していない可能性があります（Vercel の環境変数を確認）。"
+                : /policy|verification|blocked/i.test(detail)
+                  ? "カレンダーは「機密スコープ」のため、Google のアプリ検証が未完了だとブロックされることがあります。Google Cloud の「OAuth 同意画面」で検証状態を確認するか、画面の「詳細」から進めるか、Workspace 管理者に許可を依頼してください。"
+                  : "";
+      const parts = [
+        hint || "連携に失敗しました。",
+        reason ? ` Google: ${reason}` : "",
+        detail ? ` — ${detail.replace(/\+/g, " ")}` : "",
+      ];
+      setCalMsg(parts.join(""));
     } else if (cal === "no_refresh") {
       setCalMsg(
         "リフレッシュトークンを取得できませんでした。Google の連携を一度解除し、再度「連携する」から試してください（同意画面でカレンダー権限を付与してください）。",

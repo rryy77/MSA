@@ -18,6 +18,10 @@ export async function GET(request: Request) {
   if (err) {
     settingsUrl.searchParams.set("calendar", "error");
     settingsUrl.searchParams.set("reason", err);
+    const desc = url.searchParams.get("error_description");
+    if (desc) {
+      settingsUrl.searchParams.set("detail", desc.slice(0, 500));
+    }
     return NextResponse.redirect(settingsUrl);
   }
 
