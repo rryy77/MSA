@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  GCAL_OAUTH_REDIRECT_COOKIE,
+  encodeGoogleOAuthState,
   getGoogleCalendarRedirectUriForRequest,
   getGoogleOAuthClientForRedirect,
   isGoogleCalendarOAuthConfigured,
@@ -26,23 +26,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "google_oauth_not_configured" }, { status: 503 });
   }
 
+  /** state に redirect_uri を署名付きで含める（Google 戻りで Cookie が無くても getToken が一致する） */
+  const state = encodeGoogleOAuthState(auth.ok.cfg.organizerId, redirectUri);
+
   const url = oauth2.generateAuthUrl({
     access_type: "offline",
     scope: ["https://www.googleapis.com/auth/calendar.events"],
-    /** その都度アカウントを選べるようにする（テストユーザー固定で進まない） */
     prompt: "consent select_account",
     include_granted_scopes: true,
-    state: auth.ok.cfg.organizerId,
+    state,
   });
 
-  /** コールバックは Google からの GET でヘッダが変わることがあるため、getToken に同じ redirect_uri を渡す */
-  const res = NextResponse.redirect(url);
-  res.cookies.set(GCAL_OAUTH_REDIRECT_COOKIE, redirectUri, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 600,
-  });
-  return res;
+  return NextResponse.redirect(url);
 }

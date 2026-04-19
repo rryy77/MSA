@@ -1,6 +1,8 @@
+import { createHmac, timingSafeEqual } from "crypto";
 import { google } from "googleapis";
 
 import { getAppBaseUrl } from "@/lib/appUrl";
+import { msaSessionSecret } from "@/lib/msaConfig";
 
 /** 未設定時は getAppBaseUrl() + 固定パス（.env で上書き可）。リクエストがない API 向け。 */
 export function getGoogleCalendarRedirectUri(): string {
@@ -50,8 +52,41 @@ export function getGoogleCalendarRedirectUriForRequest(request: Request): string
 
 const CALLBACK_SUFFIX = "/api/google/calendar/callback";
 
-/** 認可 URL 生成時とコールバックの getToken で同一文字列にするため（リクエストヘッダ差で mismatch になるのを防ぐ） */
+/** 旧フロー: Cookie に redirect_uri を載せた場合の名前 */
 export const GCAL_OAUTH_REDIRECT_COOKIE = "msa_gcal_oauth_ru";
+
+/**
+ * Google がそのまま返す state に redirect_uri を署名込みで載せる（Cookie が届かない環境でも mismatch しない）。
+ */
+export function encodeGoogleOAuthState(organizerId: string, redirectUri: string): string {
+  const payload = JSON.stringify({ o: organizerId, r: redirectUri });
+  const b64 = Buffer.from(payload, "utf-8").toString("base64url");
+  const sig = createHmac("sha256", msaSessionSecret()).update(b64).digest("base64url");
+  return `${b64}.${sig}`;
+}
+
+export function decodeGoogleOAuthState(
+  state: string,
+): { organizerId: string; redirectUri: string } | null {
+  const parts = state.split(".");
+  if (parts.length !== 2) return null;
+  const [b64, sig] = parts;
+  try {
+    const expected = createHmac("sha256", msaSessionSecret()).update(b64).digest("base64url");
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    const inner = JSON.parse(Buffer.from(b64, "base64url").toString("utf-8")) as {
+      o?: string;
+      r?: string;
+    };
+    if (typeof inner.o !== "string" || typeof inner.r !== "string") return null;
+    if (!isSafeOAuthRedirectUri(inner.r)) return null;
+    return { organizerId: inner.o, redirectUri: inner.r };
+  } catch {
+    return null;
+  }
+}
 
 export function isSafeOAuthRedirectUri(value: string): boolean {
   try {
