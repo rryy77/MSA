@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
+import { DateTime } from "luxon";
 import { NextResponse } from "next/server";
+import { TIMEZONE } from "@/lib/constants";
 import { getAppBaseUrl } from "@/lib/appUrl";
 import { getMsaConfig } from "@/lib/msaConfig";
 import { getMsaSessionFromCookies } from "@/lib/msaSession";
@@ -7,7 +9,7 @@ import { getSelectableDatesJstYear } from "@/lib/dateRange";
 import { buildParticipantInvitePayload } from "@/lib/mailer";
 import { applyGoogleCalendarToSession } from "@/lib/googleCalendarFinalize";
 import { insertInviteNotification, maxIsoEndFromSlots } from "@/lib/inviteInbox";
-import { buildSlotsDetailed, buildSlotsFromSchedule } from "@/lib/slots";
+import { buildSlotsDetailed, buildSlotsFromSchedule, slotWithAdjustedTime } from "@/lib/slots";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { getSession } from "@/lib/store";
 import type { Session } from "@/lib/types";
@@ -27,6 +29,65 @@ type PatchBody =
   | { action: "organizer_confirm_final"; slotIds: string[] };
 
 const HM = /^\d{1,2}:\d{2}$/;
+
+type SlotTimeAdj = { slotId: string; timeStart: string; timeEnd: string };
+
+function parseSlotTimeAdjustments(body: Record<string, unknown>): SlotTimeAdj[] | null {
+  const raw = body.slotTimeAdjustments;
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) return null;
+  const out: SlotTimeAdj[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") return null;
+    const o = item as Record<string, unknown>;
+    if (typeof o.slotId !== "string" || typeof o.timeStart !== "string" || typeof o.timeEnd !== "string") {
+      return null;
+    }
+    out.push({ slotId: o.slotId, timeStart: o.timeStart, timeEnd: o.timeEnd });
+  }
+  return out;
+}
+
+/** 参加者が選んだ枠について日付は据え置きで時刻だけ更新（失敗時は NextResponse を返す） */
+function applySlotTimeAdjustmentsOrError(
+  session: Session,
+  finalSlotIds: string[],
+  adjustments: SlotTimeAdj[],
+): NextResponse | null {
+  if (!adjustments.length) return null;
+  const selected = new Set(finalSlotIds);
+  const allowed = new Set(session.organizerRound1Ids);
+  for (const adj of adjustments) {
+    if (!selected.has(adj.slotId)) {
+      return NextResponse.json({ error: "invalid_slot_adjustment" }, { status: 400 });
+    }
+    if (!allowed.has(adj.slotId)) {
+      return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
+    }
+    if (!HM.test(adj.timeStart) || !HM.test(adj.timeEnd)) {
+      return NextResponse.json({ error: "invalid_time_format" }, { status: 400 });
+    }
+    const slot = session.slots.find((s) => s.id === adj.slotId);
+    if (!slot) {
+      return NextResponse.json({ error: "unknown_slot" }, { status: 400 });
+    }
+    const newSlot = slotWithAdjustedTime(slot, adj.timeStart, adj.timeEnd);
+    if (!newSlot) {
+      return NextResponse.json({ error: "invalid_time_range" }, { status: 400 });
+    }
+    const ymd0 = DateTime.fromISO(slot.start, { zone: TIMEZONE }).toISODate();
+    const ymd1 = DateTime.fromISO(newSlot.start, { zone: TIMEZONE }).toISODate();
+    if (ymd0 !== ymd1) {
+      return NextResponse.json({ error: "date_change_not_allowed" }, { status: 400 });
+    }
+  }
+  const map = new Map(adjustments.map((a) => [a.slotId, a]));
+  session.slots = session.slots.map((s) => {
+    const adj = map.get(s.id);
+    return adj ? slotWithAdjustedTime(s, adj.timeStart, adj.timeEnd)! : s;
+  });
+  return null;
+}
 
 function formatSlotLabelsForNotify(session: Session, slotIds: string[]): string {
   const lines = slotIds
@@ -207,6 +268,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ error: "legacy_session" }, { status: 403 });
     }
 
+    const adjustments = parseSlotTimeAdjustments(body as Record<string, unknown>);
+    if (adjustments === null) {
+      return NextResponse.json({ error: "invalid_slot_adjustments" }, { status: 400 });
+    }
+    const adjErr = applySlotTimeAdjustmentsOrError(sessionP, body.slotIds, adjustments);
+    if (adjErr) return adjErr;
+
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
     sessionP.organizerFinalIds = body.slotIds;
@@ -264,6 +332,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (!sessionP.organizerUserId) {
       return NextResponse.json({ error: "legacy_session" }, { status: 403 });
     }
+
+    const adjustmentsP = parseSlotTimeAdjustments(body as Record<string, unknown>);
+    if (adjustmentsP === null) {
+      return NextResponse.json({ error: "invalid_slot_adjustments" }, { status: 400 });
+    }
+    const adjErrP = applySlotTimeAdjustmentsOrError(sessionP, body.slotIds, adjustmentsP);
+    if (adjErrP) return adjErrP;
 
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;

@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 
+import { busyMinutesOnDayJst, filterYmdWithNoFreeWindow } from "./calendarFreeWindows";
 import { TIMEZONE } from "./constants";
+import { ymdRangeOverlapsBusy } from "./organizerBusyCheck";
 import type { Slot } from "./slots";
 import { createServiceRoleClient } from "./supabase/service";
 
@@ -128,6 +130,8 @@ export type DayRememberSuggestion = {
   startMin: number;
   endMin: number;
   fromHistory: boolean;
+  /** Google カレンダーと候補期間を踏まえて選んだ具体日（クライアントはこれを優先して適用） */
+  suggestedYmd?: string;
 };
 
 /** 第1〜第3候補（履歴が足りないときは既定の曜日・時間帯で埋める） */
@@ -169,6 +173,106 @@ export function buildDayRememberSuggestions(entries: DayRememberEntry[]): DayRem
   }
 
   return out.slice(0, 3) as DayRememberSuggestion[];
+}
+
+function mondayOfWeekContainingYmd(ymd: string): DateTime {
+  const x = DateTime.fromISO(ymd, { zone: TIMEZONE }).startOf("day");
+  const wd = x.weekday;
+  return wd === 1 ? x : x.minus({ days: wd - 1 });
+}
+
+function formatSuggestionLabelWithYmd(ymd: string, startMin: number, endMin: number): string {
+  const d = DateTime.fromISO(ymd, { zone: TIMEZONE });
+  const wd = WD_JA[d.weekday - 1] ?? "?";
+  const sh = Math.floor(startMin / 60);
+  const sm = startMin % 60;
+  const eh = Math.floor(endMin / 60);
+  const em = endMin % 60;
+  const fmt = (h: number, m: number) => `${h}:${String(m).padStart(2, "0")}`;
+  return `${d.month}/${d.day}（${wd}） ${fmt(sh, sm)}〜${fmt(eh, em)}`;
+}
+
+/**
+ * 候補期間の「先頭日のある週」を見て、提案曜日がその週で埋まっている・時間が被る場合は
+ * 同一週で予定の少ない日付へ寄せる。足りなければ全体から最も空いている日へ。
+ */
+export function enrichDayRememberSuggestionsWithCalendar(
+  base: DayRememberSuggestion[],
+  busy: { start: string; end: string }[],
+  eligibleSorted: string[],
+): DayRememberSuggestion[] {
+  if (!eligibleSorted.length) return base;
+  const sorted = [...eligibleSorted].sort();
+  const blockedSet = filterYmdWithNoFreeWindow(sorted, busy, 30);
+
+  const monday = mondayOfWeekContainingYmd(sorted[0]);
+  const sun = monday.plus({ days: 6 });
+  const monIso = monday.toISODate()!;
+  const sunIso = sun.toISODate()!;
+  const inWeek = sorted.filter((ymd) => ymd >= monIso && ymd <= sunIso);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const toHm = (startMin: number, endMin: number) => {
+    const sh = Math.floor(startMin / 60);
+    const sm = startMin % 60;
+    const eh = Math.floor(endMin / 60);
+    const em = endMin % 60;
+    return { startStr: `${pad(sh)}:${pad(sm)}`, endStr: `${pad(eh)}:${pad(em)}` };
+  };
+
+  return base.map((s) => {
+    const { startStr, endStr } = toHm(s.startMin, s.endMin);
+
+    let ymd: string | undefined;
+
+    for (const d of inWeek) {
+      if (blockedSet.has(d)) continue;
+      const dt = DateTime.fromISO(d, { zone: TIMEZONE });
+      if (dt.weekday !== s.dow) continue;
+      if (ymdRangeOverlapsBusy(d, startStr, endStr, busy)) continue;
+      ymd = d;
+      break;
+    }
+
+    if (!ymd) {
+      let best: { ymd: string; load: number } | null = null;
+      for (const d of inWeek) {
+        if (blockedSet.has(d)) continue;
+        if (ymdRangeOverlapsBusy(d, startStr, endStr, busy)) continue;
+        const load = busyMinutesOnDayJst(d, busy);
+        if (!best || load < best.load) best = { ymd: d, load };
+      }
+      ymd = best?.ymd;
+    }
+
+    if (!ymd) {
+      ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, blockedSet);
+      if (ymd && ymdRangeOverlapsBusy(ymd, startStr, endStr, busy)) {
+        ymd = undefined;
+      }
+    }
+
+    if (!ymd) {
+      let best: { ymd: string; load: number } | null = null;
+      for (const d of sorted) {
+        if (blockedSet.has(d)) continue;
+        if (ymdRangeOverlapsBusy(d, startStr, endStr, busy)) continue;
+        const load = busyMinutesOnDayJst(d, busy);
+        if (!best || load < best.load) best = { ymd: d, load };
+      }
+      ymd = best?.ymd;
+    }
+
+    if (!ymd) {
+      return { ...s };
+    }
+
+    return {
+      ...s,
+      suggestedYmd: ymd,
+      label: formatSuggestionLabelWithYmd(ymd, s.startMin, s.endMin),
+    };
+  });
 }
 
 /** eligible（昇順）のうち、最初に曜日が一致する日付 */

@@ -69,7 +69,7 @@ export function OrganizerCalendarPicker({
       {suggestions && suggestions.length > 0 && onApplySuggestion && (
         <div className="rounded-2xl border border-zinc-600/80 bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
           <p className="text-[13px] leading-snug text-zinc-400">
-            よく使う曜日・時間を提案しています。タップで日付と時間に反映されます。
+            よく使う曜日・時間を提案しています。タップで日付と時間に反映され、もう一度タップすると解除できます。
           </p>
           <ul className="mt-4 flex flex-col gap-3">
             {suggestions.map((s) => {

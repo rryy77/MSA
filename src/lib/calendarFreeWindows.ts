@@ -67,3 +67,19 @@ export function filterYmdWithNoFreeWindow(
   }
   return blocked;
 }
+
+/** その JST 暦日にかかる busy の合計（分）。週内の「空き具合」比較用 */
+export function busyMinutesOnDayJst(ymd: string, busy: { start: string; end: string }[]): number {
+  const day0 = DateTime.fromISO(ymd, { zone: TIMEZONE }).startOf("day");
+  if (!day0.isValid) return 0;
+  const d0 = day0.toMillis();
+  const d1 = day0.plus({ days: 1 }).toMillis();
+  const merged = mergeBusyIntervalsIso(busy);
+  let totalMs = 0;
+  for (const b of merged) {
+    const s = Math.max(b.start, d0);
+    const e = Math.min(b.end, d1);
+    if (e > s) totalMs += e - s;
+  }
+  return Math.round(totalMs / (60 * 1000));
+}

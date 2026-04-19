@@ -197,11 +197,22 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       const r = await fetch("/api/google/calendar/status", { credentials: "include", cache: "no-store" });
       const j = (await r.json().catch(() => ({}))) as { connected?: boolean };
       setGoogleConnected(Boolean(j.connected));
-      const dr = await fetch("/api/msa/day-remember", { credentials: "include", cache: "no-store" });
+      const dates = session?.candidateDates;
+      if (!dates?.length) {
+        setSuggestions([]);
+        return;
+      }
+      const dr = await fetch("/api/msa/day-remember", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eligibleDates: dates }),
+      });
       const dj = (await dr.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
       setSuggestions(dj.suggestions ?? []);
     })();
-  }, [session?.id, session?.status, session?.slots?.length]);
+  }, [session?.id, session?.status, session?.slots?.length, session?.candidateDates]);
 
   const needsBuildEarly =
     session?.status === "awaiting_organizer_round1" && (session?.slots?.length ?? 0) === 0;
@@ -312,8 +323,18 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   }
 
   function applySuggestionSession(s: DayRememberSuggestion) {
+    if (highlightedSuggestionRank === s.rank) {
+      setHighlightedSuggestionRank(null);
+      setPickedDates(new Set());
+      setTimeStart("19:00");
+      setTimeEnd("20:00");
+      setError(null);
+      return;
+    }
     const sorted = [...(session?.candidateDates ?? [])].sort();
-    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
+    const ymd =
+      s.suggestedYmd ??
+      firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
     if (!ymd) {
       setError("この曜日で選べる空き日がありません（Google カレンダーの予定で埋まっています）。");
       return;

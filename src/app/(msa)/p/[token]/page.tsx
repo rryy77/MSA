@@ -1,8 +1,11 @@
 "use client";
 
+import { DateTime } from "luxon";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-type Slot = { id: string; label: string };
+import { TIMEZONE } from "@/lib/constants";
+
+type Slot = { id: string; label: string; start: string; end: string };
 
 type Session = {
   id: string;
@@ -13,12 +16,26 @@ type Session = {
   participantToken: string;
 };
 
+function hmFromIsoInJst(iso: string): string {
+  const d = DateTime.fromISO(iso, { zone: TIMEZONE });
+  if (!d.isValid) return "09:00";
+  return `${String(d.hour).padStart(2, "0")}:${String(d.minute).padStart(2, "0")}`;
+}
+
+function dateLabelFromSlot(slot: { start: string }): string {
+  const d = DateTime.fromISO(slot.start, { zone: TIMEZONE });
+  if (!d.isValid) return "";
+  const wd = ["月", "火", "水", "木", "金", "土", "日"][d.weekday - 1];
+  return `${d.year}年${d.month}月${d.day}日（${wd}）`;
+}
+
 export default function ParticipantPage({ params }: { params: Promise<{ token: string }> }) {
   const [token, setToken] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [slotTimes, setSlotTimes] = useState<Record<string, { start: string; end: string }>>({});
 
   useEffect(() => {
     let c = true;
@@ -50,6 +67,18 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!session?.slots?.length) return;
+    const next: Record<string, { start: string; end: string }> = {};
+    for (const s of session.slots) {
+      next[s.id] = {
+        start: hmFromIsoInJst(s.start),
+        end: hmFromIsoInJst(s.end),
+      };
+    }
+    setSlotTimes(next);
+  }, [session?.id, session?.slots]);
+
   function toggle(sid: string) {
     setSelected((prev) => {
       const n = new Set(prev);
@@ -69,10 +98,8 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
     return session.organizerRound1Ids.map((id) => slotById.get(id)).filter(Boolean) as Slot[];
   }, [session, slotById]);
 
-  const canAnswerOld =
-    session?.status === "awaiting_participant";
-  const canAnswerNew =
-    session?.status === "awaiting_participant_availability";
+  const canAnswerOld = session?.status === "awaiting_participant";
+  const canAnswerNew = session?.status === "awaiting_participant_availability";
 
   async function submit() {
     if (!session || !token) return;
@@ -86,6 +113,16 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
               action: "participant_submit_availability_token" as const,
               token,
               slotIds: Array.from(selected),
+              slotTimeAdjustments: Array.from(selected).map((id) => {
+                const slot = slotById.get(id);
+                if (!slot) throw new Error("slot");
+                const t = slotTimes[id];
+                return {
+                  slotId: id,
+                  timeStart: t?.start ?? hmFromIsoInJst(slot.start),
+                  timeEnd: t?.end ?? hmFromIsoInJst(slot.end),
+                };
+              }),
             }
           : {
               action: "participant" as const,
@@ -153,7 +190,7 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
         <h1 className="text-lg font-bold">日程の候補</h1>
         <p className="text-xs text-zinc-500">
           {canAnswerNew
-            ? "都合のよい枠にチェックを入れて確定してください（複数可）。確定すると主催者の Google カレンダーに反映されます。"
+            ? "日付は変えられません。必要なら時間だけ変更し、都合のよい枠にチェックを入れて確定してください（複数可）。確定内容が主催者の Google カレンダーに反映されます。"
             : "都合のよい枠を選んで送信してください（複数可）。"}
         </p>
       </header>
@@ -161,15 +198,56 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
       <ul className="flex flex-col gap-2">
         {choices.map((s) => (
           <li key={s.id}>
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-              <input
-                type="checkbox"
-                checked={selected.has(s.id)}
-                onChange={() => toggle(s.id)}
-                className="mt-0.5"
-              />
-              <span className="text-sm">{s.label}</span>
-            </label>
+            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={selected.has(s.id)}
+                  onChange={() => toggle(s.id)}
+                  className="mt-0.5"
+                />
+                {canAnswerNew ? (
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <span className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                      {dateLabelFromSlot(s)}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200">
+                      <input
+                        type="time"
+                        className="rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-600 dark:bg-zinc-800"
+                        value={slotTimes[s.id]?.start ?? hmFromIsoInJst(s.start)}
+                        onChange={(e) =>
+                          setSlotTimes((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              start: e.target.value,
+                              end: prev[s.id]?.end ?? hmFromIsoInJst(s.end),
+                            },
+                          }))
+                        }
+                      />
+                      <span className="text-zinc-500">〜</span>
+                      <input
+                        type="time"
+                        className="rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-600 dark:bg-zinc-800"
+                        value={slotTimes[s.id]?.end ?? hmFromIsoInJst(s.end)}
+                        onChange={(e) =>
+                          setSlotTimes((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              start: prev[s.id]?.start ?? hmFromIsoInJst(s.start),
+                              end: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-sm">{s.label}</span>
+                )}
+              </label>
+            </div>
           </li>
         ))}
       </ul>

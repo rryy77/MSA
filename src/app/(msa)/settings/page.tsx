@@ -357,6 +357,11 @@ export default function SettingsPage() {
           <p className="text-sm font-medium">Google カレンダー</p>
           <p className="mt-1 text-xs text-zinc-500">
             日程を確定したとき、主催者の Google カレンダーに Meet 付きの予定を追加します。
+            サーバーに{" "}
+            <code className="rounded bg-zinc-950 px-1 py-0.5 text-[11px] text-zinc-400">
+              MSA_GOOGLE_CALENDAR_MEET_ATTENDEES
+            </code>{" "}
+           （カンマ区切りのメール）を設定すると、その宛先へカレンダー招待が自動送信されます。
           </p>
           <p className="mt-2 text-xs leading-relaxed text-zinc-500">
             Google Cloud の OAuth 同意画面が<strong className="text-zinc-400">「テスト中」</strong>

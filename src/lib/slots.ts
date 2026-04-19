@@ -60,6 +60,30 @@ export function buildSlotsFromSchedule(dates: string[], timeStart: string, timeE
   return slotsOut;
 }
 
+/** 日付は変えずに時刻だけ差し替え（参加者が時間だけ変更するとき） */
+export function slotWithAdjustedTime(slot: Slot, timeStart: string, timeEnd: string): Slot | null {
+  const parseHm = (s: string) => {
+    const parts = s.trim().split(":");
+    const h = Number(parts[0]);
+    const m = Number(parts[1] ?? 0);
+    return { h, m };
+  };
+  const sh = parseHm(timeStart);
+  const eh = parseHm(timeEnd);
+  const day = DateTime.fromISO(slot.start, { zone: TIMEZONE }).startOf("day");
+  if (!day.isValid) return null;
+  const start = day.set({ hour: sh.h, minute: sh.m, second: 0, millisecond: 0 });
+  const end = day.set({ hour: eh.h, minute: eh.m, second: 0, millisecond: 0 });
+  if (end <= start) return null;
+  const ymd = day.toISODate()!;
+  return {
+    ...slot,
+    start: start.toISO()!,
+    end: end.toISO()!,
+    label: `${ymd} ${timeStart}–${timeEnd} (JST)`,
+  };
+}
+
 export function buildSlotsDetailed(
   items: { ymd: string; timeStart: string; timeEnd: string }[],
 ): Slot[] {

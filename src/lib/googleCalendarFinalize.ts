@@ -1,5 +1,6 @@
 import { recordDayRememberSlots } from "@/lib/dayRemember";
 import { fetchGoogleCalendarRefreshToken } from "@/lib/inviteInbox";
+import { getMsaFixedMeetInviteEmails } from "@/lib/msaMeetInviteEmails";
 import type { Session } from "@/lib/types";
 import type { Slot } from "@/lib/slots";
 
@@ -43,13 +44,13 @@ export async function applyGoogleCalendarToSession(
   }
 
   try {
+    const attendeeEmails = getMsaFixedMeetInviteEmails();
     const { eventIds, meetLinks } = await createCalendarEventsWithMeet(
       refreshToken,
       slots,
       {
         summaryPrefix: `MSA ${session.triggerDateJst}`,
-        /** 2 名専用アプリではメールで招待しない（主催者のカレンダーのみに作成） */
-        attendeeEmail: null,
+        attendeeEmails,
       },
     );
     session.calendarCreated = true;

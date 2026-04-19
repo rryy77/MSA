@@ -107,13 +107,19 @@ function ScheduleWizard() {
   }, [step, loadSessions]);
 
   useEffect(() => {
-    if (step !== "pickDates") return;
+    if (step !== "pickDates" || !eligibleDates.length) return;
     void (async () => {
-      const r = await fetch("/api/msa/day-remember", { credentials: "include", cache: "no-store" });
+      const r = await fetch("/api/msa/day-remember", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eligibleDates }),
+      });
       const j = (await r.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
       setSuggestions(j.suggestions ?? []);
     })();
-  }, [step]);
+  }, [step, eligibleDates]);
 
   useEffect(() => {
     if (step !== "pickDates" || !eligibleDates.length || !googleConnected) {
@@ -181,8 +187,17 @@ function ScheduleWizard() {
   }
 
   function applySuggestion(s: DayRememberSuggestion) {
+    if (highlightedSuggestionRank === s.rank) {
+      setHighlightedSuggestionRank(null);
+      setSelectedYmd(new Set());
+      setTimes({});
+      setError(null);
+      return;
+    }
     const sorted = [...eligibleDates].sort();
-    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
+    const ymd =
+      s.suggestedYmd ??
+      firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
     if (!ymd) {
       setError("この曜日で選べる空き日がありません（Google カレンダーの予定で埋まっています）。");
       return;

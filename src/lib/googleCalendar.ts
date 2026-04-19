@@ -35,11 +35,12 @@ export function isGoogleOAuthRefreshFatalError(e: unknown): boolean {
 /**
  * 主催者カレンダーに、枠ごとにイベントを作成し Meet を付与する。
  * Meet 付き作成がポリシー等で失敗した場合は Meet なしで再試行する。
+ * attendeeEmails を渡すとゲストとして追加し、sendUpdates で招待メールを送る。
  */
 export async function createCalendarEventsWithMeet(
   refreshToken: string,
   slots: Slot[],
-  opts: { summaryPrefix: string; attendeeEmail?: string | null },
+  opts: { summaryPrefix: string; attendeeEmails?: string[] },
 ): Promise<{ eventIds: string[]; meetLinks: string[] }> {
   const oauth2 = getGoogleOAuthClientOrNull();
   if (!oauth2) {
@@ -50,6 +51,10 @@ export async function createCalendarEventsWithMeet(
 
   const eventIds: string[] = [];
   const meetLinks: string[] = [];
+  const attendeeList = (opts.attendeeEmails ?? []).filter(Boolean);
+  const attendees =
+    attendeeList.length > 0 ? attendeeList.map((email) => ({ email })) : undefined;
+  const sendUpdates = attendeeList.length > 0 ? ("all" as const) : undefined;
 
   for (const slot of slots) {
     const baseBody = {
@@ -57,9 +62,7 @@ export async function createCalendarEventsWithMeet(
       description: "Meet Schedule Assistant（MSA）で確定した日程です。",
       start: { dateTime: slot.start, timeZone: TIMEZONE },
       end: { dateTime: slot.end, timeZone: TIMEZONE },
-      attendees: opts.attendeeEmail
-        ? [{ email: opts.attendeeEmail }]
-        : undefined,
+      attendees,
     };
 
     let res;
@@ -67,6 +70,7 @@ export async function createCalendarEventsWithMeet(
       res = await calendar.events.insert({
         calendarId: "primary",
         conferenceDataVersion: 1,
+        sendUpdates,
         requestBody: {
           ...baseBody,
           conferenceData: {
@@ -89,6 +93,7 @@ export async function createCalendarEventsWithMeet(
       try {
         res = await calendar.events.insert({
           calendarId: "primary",
+          sendUpdates,
           requestBody: baseBody,
         });
       } catch (second: unknown) {

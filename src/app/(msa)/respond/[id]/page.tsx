@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DateTime } from "luxon";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { TIMEZONE } from "@/lib/constants";
 
 type Slot = { id: string; label: string; start: string; end: string };
 
@@ -13,6 +16,19 @@ type Session = {
   slots: Slot[];
 };
 
+function hmFromIsoInJst(iso: string): string {
+  const d = DateTime.fromISO(iso, { zone: TIMEZONE });
+  if (!d.isValid) return "09:00";
+  return `${String(d.hour).padStart(2, "0")}:${String(d.minute).padStart(2, "0")}`;
+}
+
+function dateLabelFromSlot(slot: { start: string }): string {
+  const d = DateTime.fromISO(slot.start, { zone: TIMEZONE });
+  if (!d.isValid) return "";
+  const wd = ["月", "火", "水", "木", "金", "土", "日"][d.weekday - 1];
+  return `${d.year}年${d.month}月${d.day}日（${wd}）`;
+}
+
 export default function RespondPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const [id, setId] = useState<string | null>(null);
@@ -21,6 +37,7 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
   const [pending, setPending] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [done, setDone] = useState(false);
+  const [slotTimes, setSlotTimes] = useState<Record<string, { start: string; end: string }>>({});
 
   useEffect(() => {
     let c = true;
@@ -63,6 +80,18 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!session?.slots?.length) return;
+    const next: Record<string, { start: string; end: string }> = {};
+    for (const s of session.slots) {
+      next[s.id] = {
+        start: hmFromIsoInJst(s.start),
+        end: hmFromIsoInJst(s.end),
+      };
+    }
+    setSlotTimes(next);
+  }, [session?.id, session?.slots]);
+
   const slotById = useMemo(() => {
     if (!session?.slots?.length) return new Map<string, Slot>();
     return new Map(session.slots.map((s) => [s.id, s]));
@@ -77,6 +106,8 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
     });
   }
 
+  const canAdjustTime = session?.status === "awaiting_participant_availability";
+
   async function submit() {
     if (!id || selected.size === 0) {
       setError("1つ以上選んでください");
@@ -85,12 +116,25 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
     setPending(true);
     setError(null);
     try {
+      const slotTimeAdjustments = canAdjustTime
+        ? Array.from(selected).map((sid) => {
+            const slot = slotById.get(sid);
+            if (!slot) throw new Error("slot");
+            const t = slotTimes[sid];
+            return {
+              slotId: sid,
+              timeStart: t?.start ?? hmFromIsoInJst(slot.start),
+              timeEnd: t?.end ?? hmFromIsoInJst(slot.end),
+            };
+          })
+        : undefined;
       const res = await fetch(`/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "participant_submit_availability",
           slotIds: Array.from(selected),
+          ...(slotTimeAdjustments?.length ? { slotTimeAdjustments } : {}),
         }),
       });
       if (!res.ok) {
@@ -146,22 +190,63 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
       <header>
         <h1 className="text-lg font-bold sm:text-xl">参加できる日程を選ぶ</h1>
         <p className="mt-1 text-xs text-zinc-500">
-          行ける候補にチェックを入れて確定してください。主催者の Google カレンダーに反映され、主催者へ通知が届きます。
+          {canAdjustTime
+            ? "日付は変えられません。必要なら時間だけ変更し、行ける候補にチェックを入れて確定してください。主催者の Google カレンダーに反映され、主催者へ通知が届きます。"
+            : "行ける候補にチェックを入れて確定してください。主催者の Google カレンダーに反映され、主催者へ通知が届きます。"}
         </p>
       </header>
       {error && <p className="text-sm text-red-400">{error}</p>}
       <ul className="flex flex-col gap-2 rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4">
         {choices.map((s) => (
           <li key={s.id}>
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={selected.has(s.id)}
-                onChange={() => toggle(s.id)}
-                className="mt-1"
-              />
-              <span className="text-sm text-zinc-200">{s.label}</span>
-            </label>
+            <div className="rounded-lg border border-zinc-700 px-3 py-2">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={selected.has(s.id)}
+                  onChange={() => toggle(s.id)}
+                  className="mt-1"
+                />
+                {canAdjustTime ? (
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <span className="text-sm font-medium text-zinc-100">{dateLabelFromSlot(s)}</span>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-200">
+                      <input
+                        type="time"
+                        className="rounded border border-zinc-600 bg-zinc-800 px-2 py-1"
+                        value={slotTimes[s.id]?.start ?? hmFromIsoInJst(s.start)}
+                        onChange={(e) =>
+                          setSlotTimes((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              start: e.target.value,
+                              end: prev[s.id]?.end ?? hmFromIsoInJst(s.end),
+                            },
+                          }))
+                        }
+                      />
+                      <span className="text-zinc-500">〜</span>
+                      <input
+                        type="time"
+                        className="rounded border border-zinc-600 bg-zinc-800 px-2 py-1"
+                        value={slotTimes[s.id]?.end ?? hmFromIsoInJst(s.end)}
+                        onChange={(e) =>
+                          setSlotTimes((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              start: prev[s.id]?.start ?? hmFromIsoInJst(s.start),
+                              end: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-sm text-zinc-200">{s.label}</span>
+                )}
+              </label>
+            </div>
           </li>
         ))}
       </ul>
