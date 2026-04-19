@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/appUrl";
 import { getGoogleOAuthClientOrNull } from "@/lib/googleCalendarOAuth";
@@ -5,7 +6,8 @@ import {
   fetchGoogleCalendarRefreshToken,
   updateGoogleCalendarRefreshToken,
 } from "@/lib/inviteInbox";
-import { createClient } from "@/lib/supabase/server";
+import { getMsaConfig } from "@/lib/msaConfig";
+import { getMsaSessionFromCookies } from "@/lib/msaSession";
 
 export async function GET(request: Request) {
   const base = getAppBaseUrl();
@@ -27,15 +29,21 @@ export async function GET(request: Request) {
     return NextResponse.redirect(settingsUrl);
   }
 
-  const supabase = await createClient();
-  if (!supabase) {
+  let cfg;
+  try {
+    cfg = getMsaConfig();
+  } catch {
     return NextResponse.redirect(new URL("/login", base));
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user || user.id !== state) {
+  if (state !== cfg.organizerId) {
+    settingsUrl.searchParams.set("calendar", "error");
+    settingsUrl.searchParams.set("reason", "state_mismatch");
+    return NextResponse.redirect(settingsUrl);
+  }
+
+  const msa = getMsaSessionFromCookies(await cookies());
+  if (!msa || msa.role !== "organizer" || msa.uid !== cfg.organizerId) {
     return NextResponse.redirect(
       new URL(`/login?next=${encodeURIComponent("/settings")}`, base),
     );
@@ -50,13 +58,13 @@ export async function GET(request: Request) {
 
   try {
     const { tokens } = await oauth2.getToken(code);
-    const existing = await fetchGoogleCalendarRefreshToken(supabase, user.id);
+    const existing = await fetchGoogleCalendarRefreshToken(msa.uid);
     const refresh = tokens.refresh_token ?? existing ?? null;
     if (!refresh) {
       settingsUrl.searchParams.set("calendar", "no_refresh");
       return NextResponse.redirect(settingsUrl);
     }
-    await updateGoogleCalendarRefreshToken(supabase, user.id, refresh);
+    await updateGoogleCalendarRefreshToken(msa.uid, refresh);
   } catch (e) {
     console.error("google calendar callback", e);
     settingsUrl.searchParams.set("calendar", "error");

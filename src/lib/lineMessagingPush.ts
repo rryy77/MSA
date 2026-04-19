@@ -53,7 +53,7 @@ export function fireAndForgetLineMessagingForUser(
 
   void (async () => {
     try {
-      const lineUid = await fetchLineMessagingUserId(service, appUserId);
+      const lineUid = await fetchLineMessagingUserId(appUserId);
       if (!lineUid?.trim()) return;
       await sendLineMessagingPushMessage(lineUid, message);
     } catch (e) {

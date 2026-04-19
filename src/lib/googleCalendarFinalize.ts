@@ -1,5 +1,3 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
 import { fetchGoogleCalendarRefreshToken } from "@/lib/inviteInbox";
 import type { Session } from "@/lib/types";
 import type { Slot } from "@/lib/slots";
@@ -14,7 +12,6 @@ import {
  * トークンなし・API 失敗時は session を確定済みのまま、calendarCreated を false にする。
  */
 export async function applyGoogleCalendarToSession(
-  supabase: SupabaseClient,
   userId: string,
   session: Session,
   finalSlotIds: string[],
@@ -32,7 +29,7 @@ export async function applyGoogleCalendarToSession(
 
   let refreshToken: string | null = null;
   try {
-    refreshToken = await fetchGoogleCalendarRefreshToken(supabase, userId);
+    refreshToken = await fetchGoogleCalendarRefreshToken(userId);
   } catch (e) {
     console.error("fetchGoogleCalendarRefreshToken", e);
     refreshToken = null;

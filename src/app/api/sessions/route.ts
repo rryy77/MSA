@@ -1,23 +1,19 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { getMsaConfig } from "@/lib/msaConfig";
+import { getMsaSessionFromCookies } from "@/lib/msaSession";
 import { createSession } from "@/lib/sessionFactory";
-import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
-import { createClient } from "@/lib/supabase/server";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { listSessionSummaries } from "@/lib/store";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-    if (!supabase) {
-      return supabaseNotConfiguredResponse();
-    }
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    const cfg = getMsaConfig();
+    const msa = getMsaSessionFromCookies(await cookies());
+    if (!msa || msa.role !== "organizer" || msa.uid !== cfg.organizerId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const list = await listSessionSummaries(user.id);
+    const list = await listSessionSummaries(cfg.organizerId);
     return NextResponse.json({ sessions: list });
   } catch (e) {
     console.error("GET /api/sessions", e);
@@ -34,18 +30,13 @@ export async function GET() {
 
 export async function POST() {
   try {
-    const supabase = await createClient();
-    if (!supabase) {
-      return supabaseNotConfiguredResponse();
-    }
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    const cfg = getMsaConfig();
+    const msa = getMsaSessionFromCookies(await cookies());
+    if (!msa || msa.role !== "organizer" || msa.uid !== cfg.organizerId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const session = createSession(new Date());
-    session.organizerUserId = user.id;
+    session.organizerUserId = cfg.organizerId;
     const persistErr = await persistSessionOrError(session);
     if (persistErr) return persistErr;
     return NextResponse.json({ session });

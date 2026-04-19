@@ -1,18 +1,20 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 
-export async function insertInviteNotification(
-  supabase: SupabaseClient,
-  input: {
-    sessionId: string;
-    recipientUserId: string;
-    organizerUserId: string;
-    subject: string;
-    textBody: string;
-    htmlBody: string;
-    inviteUrl: string;
-  },
-): Promise<void> {
-  const { error } = await supabase.from("invite_notifications").insert({
+/** RLS を避けるため service_role のみで挿入（MSA ログインは Supabase Auth を使わない） */
+export async function insertInviteNotification(input: {
+  sessionId: string;
+  recipientUserId: string;
+  organizerUserId: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+  inviteUrl: string;
+}): Promise<void> {
+  const service = createServiceRoleClient();
+  if (!service) {
+    throw new Error("invite_inbox: SUPABASE_SERVICE_ROLE_KEY が未設定です");
+  }
+  const { error } = await service.from("invite_notifications").insert({
     session_id: input.sessionId,
     recipient_user_id: input.recipientUserId,
     organizer_user_id: input.organizerUserId,
@@ -24,22 +26,16 @@ export async function insertInviteNotification(
   if (error) throw new Error(`invite_inbox: ${error.message}`);
 }
 
-export async function fetchProfileEmail(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
+export async function fetchProfileEmail(userId: string): Promise<string | null> {
+  const service = createServiceRoleClient();
+  if (!service) throw new Error("profiles: SUPABASE_SERVICE_ROLE_KEY が未設定です");
+  const { data, error } = await service
     .from("profiles")
     .select("email")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw new Error(`profiles: ${error.message}`);
   return data?.email ?? null;
-}
-
-/** LIKE の % _ をリテラル扱いする（メールに含まれても誤マッチしない） */
-function escapeForILike(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
 function isMissingGoogleCalendarColumn(error: { message?: string }): boolean {
@@ -51,11 +47,10 @@ function isMissingGoogleCalendarColumn(error: { message?: string }): boolean {
 }
 
 /** 登録済みプロフィールをメールで検索（大小文字を区別しない） */
-export async function fetchGoogleCalendarRefreshToken(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
+export async function fetchGoogleCalendarRefreshToken(userId: string): Promise<string | null> {
+  const service = createServiceRoleClient();
+  if (!service) throw new Error("profiles: SUPABASE_SERVICE_ROLE_KEY が未設定です");
+  const { data, error } = await service
     .from("profiles")
     .select("google_calendar_refresh_token")
     .eq("id", userId)
@@ -82,11 +77,10 @@ function isMissingLineMessagingUserIdColumn(error: { message?: string }): boolea
 }
 
 /** LINE Messaging API の送信先 userId（LINE Login で保存） */
-export async function fetchLineMessagingUserId(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
+export async function fetchLineMessagingUserId(userId: string): Promise<string | null> {
+  const service = createServiceRoleClient();
+  if (!service) return null;
+  const { data, error } = await service
     .from("profiles")
     .select("line_messaging_user_id")
     .eq("id", userId)
@@ -105,11 +99,12 @@ export async function fetchLineMessagingUserId(
 }
 
 export async function updateGoogleCalendarRefreshToken(
-  supabase: SupabaseClient,
   userId: string,
   token: string | null,
 ): Promise<void> {
-  const { error } = await supabase
+  const service = createServiceRoleClient();
+  if (!service) throw new Error("profiles: SUPABASE_SERVICE_ROLE_KEY が未設定です");
+  const { error } = await service
     .from("profiles")
     .update({ google_calendar_refresh_token: token })
     .eq("id", userId);
@@ -123,17 +118,3 @@ export async function updateGoogleCalendarRefreshToken(
   }
 }
 
-export async function fetchProfileByEmail(
-  supabase: SupabaseClient,
-  email: string,
-): Promise<{ id: string; email: string | null } | null> {
-  const normalized = email.trim().toLowerCase();
-  const pattern = escapeForILike(normalized);
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, email")
-    .ilike("email", pattern)
-    .maybeSingle();
-  if (error) throw new Error(`profiles: ${error.message}`);
-  return data ?? null;
-}

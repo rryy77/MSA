@@ -146,7 +146,7 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
       <header>
         <h1 className="text-lg font-bold sm:text-xl">参加できる日程を選ぶ</h1>
         <p className="mt-1 text-xs text-zinc-500">
-          行ける候補にチェックを入れて送信してください。主催者に共有されます。
+          行ける候補にチェックを入れて確定してください。主催者の Google カレンダーに反映され、主催者へ通知が届きます。
         </p>
       </header>
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -171,7 +171,7 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
         onClick={() => void submit()}
         className="w-full rounded-xl bg-teal-600 py-3.5 text-sm font-semibold text-white disabled:opacity-50"
       >
-        {pending ? "送信中…" : "主催者に送信"}
+        {pending ? "送信中…" : "確定する"}
       </button>
     </div>
   );

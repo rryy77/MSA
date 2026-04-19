@@ -1,25 +1,22 @@
 import { NextResponse } from "next/server";
-import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
-import { createClient } from "@/lib/supabase/server";
+import { getMsaAuth } from "@/lib/msaApiAuth";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 
 export async function GET() {
-  const supabase = await createClient();
-  if (!supabase) {
-    return supabaseNotConfiguredResponse();
-  }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await getMsaAuth();
+  if ("error" in auth) return auth.error;
+
+  const service = createServiceRoleClient();
+  if (!service) {
+    return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await service
     .from("invite_notifications")
     .select(
       "id, session_id, subject, invite_url, created_at, read_at, text_body, html_body",
     )
-    .eq("recipient_user_id", user.id)
+    .eq("recipient_user_id", auth.ok.msa.uid)
     .order("created_at", { ascending: false });
 
   if (error) {

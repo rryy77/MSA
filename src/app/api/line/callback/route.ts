@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/appUrl";
-import { createClient } from "@/lib/supabase/server";
+import { getMsaSessionFromCookies } from "@/lib/msaSession";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 
 export async function GET(request: Request) {
   const base = getAppBaseUrl().replace(/\/$/, "");
@@ -27,15 +28,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(settingsUrl);
   }
 
-  const supabase = await createClient();
-  if (!supabase) {
-    return NextResponse.redirect(new URL("/login", base));
-  }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const msa = getMsaSessionFromCookies(cookieStore);
+  if (!msa) {
     return NextResponse.redirect(
       new URL(`/login?next=${encodeURIComponent("/settings")}`, base),
     );
@@ -95,13 +89,20 @@ export async function GET(request: Request) {
     return NextResponse.redirect(settingsUrl);
   }
 
-  const { error: upErr } = await supabase
+  const service = createServiceRoleClient();
+  if (!service) {
+    settingsUrl.searchParams.set("line", "error");
+    settingsUrl.searchParams.set("reason", "supabase");
+    return NextResponse.redirect(settingsUrl);
+  }
+
+  const { error: upErr } = await service
     .from("profiles")
     .update({
       line_messaging_user_id: profile.userId,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", user.id);
+    .eq("id", msa.uid);
 
   if (upErr) {
     console.error("line profile save", upErr);

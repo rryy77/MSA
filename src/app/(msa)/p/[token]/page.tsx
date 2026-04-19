@@ -112,10 +112,21 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
   if (error && !session) return <p className="text-sm text-red-600">{error}</p>;
   if (!session) return <p className="text-sm text-zinc-500">読み込み中…</p>;
 
-  if (session.status === "awaiting_organizer_confirm") {
+  if (session.status === "completed") {
     return (
       <div className="rounded-2xl border border-teal-800/50 bg-teal-950/30 p-6 text-center text-sm text-teal-100/95 dark:border-teal-700/40">
-        回答を送信しました。主催者の確定をお待ちください（アプリに登録している場合は通知も届きます）。
+        <p className="font-medium">日程を確定しました。</p>
+        <p className="mt-2 text-xs text-teal-200/90">
+          主催者（Aさん）のカレンダーに反映され、通知が届きます。
+        </p>
+      </div>
+    );
+  }
+
+  if (session.status === "awaiting_organizer_confirm") {
+    return (
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-center text-sm dark:border-zinc-800 dark:bg-zinc-900">
+        この調整は旧形式のままです。主催者に確認してください。
       </div>
     );
   }
@@ -142,7 +153,7 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
         <h1 className="text-lg font-bold">日程の候補</h1>
         <p className="text-xs text-zinc-500">
           {canAnswerNew
-            ? "都合のよい枠にチェックを入れて送信してください（ログイン不要・複数可）。"
+            ? "都合のよい枠にチェックを入れて確定してください（複数可）。確定すると主催者の Google カレンダーに反映されます。"
             : "都合のよい枠を選んで送信してください（複数可）。"}
         </p>
       </header>
@@ -168,7 +179,7 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
         onClick={() => void submit()}
         className="rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
       >
-        送信
+        {canAnswerNew ? "確定する" : "送信"}
       </button>
     </div>
   );

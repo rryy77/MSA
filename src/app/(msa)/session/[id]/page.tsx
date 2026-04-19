@@ -1,12 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  getDefaultInviteEmail,
-  getInviteEmailHistory,
-  rememberInviteEmail,
-} from "@/lib/inviteEmailHistory";
 
 type Slot = { id: string; label: string; start: string; end: string };
 
@@ -100,18 +95,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [pickedDates, setPickedDates] = useState<Set<string>>(new Set());
   const [timeStart, setTimeStart] = useState("19:00");
   const [timeEnd, setTimeEnd] = useState("20:00");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteEmailSuggestions, setInviteEmailSuggestions] = useState<string[]>([]);
-  /** 外部メール未送信時の注意（アプリ内通知は成功している場合あり） */
-  const [mailNotice, setMailNotice] = useState<string | null>(null);
   /** 確定は成功したがカレンダー未連携・API 失敗など */
   const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
-  /** 主催者が「都合が付く」とチェックした枠（確定時に参加者候補との積集合になる） */
-  const [organizerSelected, setOrganizerSelected] = useState<Set<string>>(new Set());
-  const organizerInitRef = useRef<string | null>(null);
-  /** 確定ボタンの二重タップで PATCH が重複しないようにする */
-  const finalizeInFlightRef = useRef(false);
-
   useEffect(() => {
     let c = true;
     params.then((p) => {
@@ -150,26 +135,9 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     load();
   }, [load]);
 
-  useEffect(() => {
-    setInviteEmail(getDefaultInviteEmail());
-    setInviteEmailSuggestions(getInviteEmailHistory());
-  }, []);
-
   const slotById = useMemo(() => {
     if (!session?.slots?.length) return new Map<string, Slot>();
     return new Map(session.slots.map((s) => [s.id, s]));
-  }, [session]);
-
-  useEffect(() => {
-    if (!session) return;
-    if (session.status !== "awaiting_organizer_confirm") {
-      organizerInitRef.current = null;
-      return;
-    }
-    const key = session.id;
-    if (organizerInitRef.current === key) return;
-    organizerInitRef.current = key;
-    setOrganizerSelected(new Set(session.participantPreferredSlotIds ?? []));
   }, [session]);
 
   function toggleDate(ymd: string) {
@@ -185,7 +153,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     if (!id) return false;
     setPending(true);
     setError(null);
-    setMailNotice(null);
     setCalendarNotice(null);
     try {
       const res = await fetch(`/api/sessions/${id}`, {
@@ -198,19 +165,12 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         error?: string;
         message?: string;
         session?: Session;
-        inviteEmailSent?: boolean;
         calendarWarning?: string;
       };
       if (!res.ok) {
         throw new Error(messageForFailedSessionPatch(res, j));
       }
       if (j.session) setSession(j.session);
-      const action = (body as { action?: string }).action;
-      if (action === "send_schedule_invite" && j.inviteEmailSent === false) {
-        setMailNotice(
-          "外部メールは届いていません（送信未設定・エラー・または宛先制限の可能性）。アプリ内通知は届いていることがあります。Resend/SMTP と迷惑メールを確認してください。",
-        );
-      }
       if (
         j.calendarWarning === "google_calendar_not_connected" ||
         j.calendarWarning === "no_slots"
@@ -236,51 +196,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }
   }
 
-  async function sendInvite() {
-    const em = inviteEmail.trim().toLowerCase();
-    if (!em) {
-      setError("参加者のメールアドレスを入力してください");
-      return;
-    }
-    const ok = await patch({ action: "send_schedule_invite", participantEmail: em });
-    if (ok) {
-      rememberInviteEmail(em);
-      setInviteEmail(getDefaultInviteEmail());
-      setInviteEmailSuggestions(getInviteEmailHistory());
-    }
-  }
-
-  async function confirmFinal() {
-    if (!session || pending) return;
-    const slotIds = Array.from(organizerSelected);
-    if (slotIds.length === 0) {
-      setError("主催者の都合が付く枠を1つ以上選んでください");
-      return;
-    }
-    const pSet = new Set(session.participantPreferredSlotIds ?? []);
-    const overlap = slotIds.filter((id) => pSet.has(id));
-    if (overlap.length === 0) {
-      setError(
-        "参加者の候補と共通する枠がありません。主催者のチェックを増やすか、参加者の候補を確認してください。",
-      );
-      return;
-    }
-    if (finalizeInFlightRef.current) return;
-    finalizeInFlightRef.current = true;
-    try {
-      await patch({ action: "organizer_confirm_final", slotIds });
-    } finally {
-      finalizeInFlightRef.current = false;
-    }
-  }
-
-  function toggleOrganizerSlot(sid: string) {
-    setOrganizerSelected((prev) => {
-      const n = new Set(prev);
-      if (n.has(sid)) n.delete(sid);
-      else n.add(sid);
-      return n;
-    });
+  async function sendInviteToB() {
+    await patch({ action: "send_schedule_invite" });
   }
 
   if (!id || !session) {
@@ -294,14 +211,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const needsBuild = session.status === "awaiting_organizer_round1" && session.slots.length === 0;
   const candidateDates = session.candidateDates ?? [];
 
-  const roundSlots = (session.organizerRound1Ids ?? [])
-    .map((sid) => slotById.get(sid))
-    .filter(Boolean) as Slot[];
-  roundSlots.sort((a, b) => a.start.localeCompare(b.start));
-
-  const participantPickSet = new Set(session.participantPreferredSlotIds ?? []);
-  const overlapCount = [...organizerSelected].filter((id) => participantPickSet.has(id)).length;
-
   return (
     <div className="flex flex-1 flex-col gap-5 pb-4">
       <Link href="/" className="text-sm text-teal-700 hover:underline dark:text-teal-400">
@@ -313,11 +222,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       </header>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {mailNotice && (
-        <p className="rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-100/95">
-          {mailNotice}
-        </p>
-      )}
       {calendarNotice && (
         <p className="rounded-lg border border-zinc-600/50 bg-zinc-800/50 px-3 py-2 text-xs leading-relaxed text-zinc-200">
           {calendarNotice}{" "}
@@ -397,45 +301,27 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       {session.status === "awaiting_organizer_round1" && session.slots.length > 0 && (
         <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-100">参加者に日程候補を送る</h2>
+          <h2 className="text-sm font-semibold text-zinc-100">参加者（Bさん）に日程候補を送る</h2>
           <p className="mt-1 text-xs text-zinc-400">
-            アプリに登録している相手のメールアドレスを入力してください。メッセージに通知が届き、相手は行ける枠にチェックを付けて返信します。
+            候補の日時を作成したら、下のボタンで B さんにアプリ内通知・プッシュ・LINE で案内します（メールは送りません）。
           </p>
-          <label className="mt-3 flex flex-col gap-1.5 text-sm">
-            <span className="text-zinc-300">参加者のメール</span>
-            <input
-              type="email"
-              autoComplete="email"
-              list="msa-invite-email-history"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="example@gmail.com"
-              className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2.5 text-zinc-100 placeholder:text-zinc-500"
-            />
-            <datalist id="msa-invite-email-history">
-              {inviteEmailSuggestions.map((e) => (
-                <option key={e} value={e} />
-              ))}
-            </datalist>
-          </label>
           <button
             type="button"
-            disabled={pending || !inviteEmail.trim()}
-            onClick={() => void sendInvite()}
+            disabled={pending}
+            onClick={() => void sendInviteToB()}
             className="mt-4 w-full rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {pending ? "送信中…" : "送信"}
+            {pending ? "送信中…" : "Bさんに案内を送る"}
           </button>
         </section>
       )}
 
       {session.status === "awaiting_participant_availability" && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-100">相手の回答待ち</h2>
+          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-100">Bさんの確定待ち</h2>
           <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/90">
-            {session.participantEmail
-              ? `「${session.participantEmail}」宛に案内を送りました。相手がチェックして返信するまでお待ちください。`
-              : "案内を送信済みです。相手の返信をお待ちください。"}
+            B さんに案内を送りました。B さんが候補を選んで確定すると、あなたの Google
+            カレンダーに予定が入り、こちらに通知だけ届きます。
           </p>
           <button
             type="button"
@@ -448,127 +334,25 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       )}
 
       {session.status === "awaiting_organizer_confirm" && (
-        <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-100">最終調整（参加者・主催者）</h2>
-          <p className="mt-1 text-xs text-zinc-400">
-            参加者が選んだ枠と、主催者の都合が両方つく枠だけが確定します。主催者の列にチェックを入れて調整してください。
+        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-100">旧フロー</h2>
+          <p className="mt-1 text-xs text-amber-800/90 dark:text-amber-200/90">
+            このセッションは以前の「主催者が最終確定」形式のままです。新規調整では B
+            の確定だけで完了します。
           </p>
-          {roundSlots.length === 0 ? (
-            <p className="mt-2 text-sm text-zinc-300">候補がありません。</p>
-          ) : (
-            <>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setOrganizerSelected(new Set(session.organizerRound1Ids ?? []))
-                  }
-                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-                >
-                  全選択
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrganizerSelected(new Set())}
-                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-                >
-                  全解除
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setOrganizerSelected(
-                      new Set(session.participantPreferredSlotIds ?? []),
-                    )
-                  }
-                  className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-                >
-                  参加者の候補のみ選択
-                </button>
-              </div>
-              <div className="mt-3 overflow-x-auto rounded-xl border border-zinc-600">
-                <table className="w-full min-w-[320px] border-collapse text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-600 bg-zinc-800/90">
-                      <th className="px-3 py-2 font-semibold text-zinc-100">
-                        候補
-                      </th>
-                      <th className="w-24 px-2 py-2 text-center font-semibold text-zinc-100">
-                        参加者
-                      </th>
-                      <th className="w-28 px-2 py-2 text-center font-semibold text-zinc-100">
-                        主催者
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {roundSlots.map((s) => {
-                      const pOk = participantPickSet.has(s.id);
-                      const oOk = organizerSelected.has(s.id);
-                      return (
-                        <tr
-                          key={s.id}
-                          className="border-b border-zinc-700 bg-zinc-950/40 last:border-0"
-                        >
-                          <td className="px-3 py-2.5 text-zinc-100">
-                            {s.label}
-                          </td>
-                          <td className="px-2 py-2.5 text-center">
-                            {pOk ? (
-                              <span className="text-teal-600 dark:text-teal-400" title="都合が付く">
-                                ✓
-                              </span>
-                            ) : (
-                              <span className="text-zinc-300 dark:text-zinc-600">—</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2.5 text-center">
-                            <input
-                              type="checkbox"
-                              checked={oOk}
-                              onChange={() => toggleOrganizerSlot(s.id)}
-                              className="h-4 w-4 accent-teal-600"
-                              aria-label={`主催者の都合: ${s.label}`}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-3 text-xs text-zinc-400">
-                確定に含まれる枠（両方チェック）:{" "}
-                <span className="font-semibold text-teal-400">
-                  {overlapCount}
-                </span>{" "}
-                件
-              </p>
-            </>
-          )}
-          <button
-            type="button"
-            disabled={pending || roundSlots.length === 0 || overlapCount === 0}
-            onClick={() => void confirmFinal()}
-            className="mt-4 w-full rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            {pending ? "処理中…" : "確定する"}
-          </button>
         </section>
       )}
 
       {(session.status === "awaiting_participant" || session.status === "awaiting_organizer_final") && (
         <section className="rounded-2xl border border-zinc-600 bg-zinc-900/50 p-4 text-sm text-zinc-400">
-          このセッションは以前のフロー（リンク共有型）です。新規作成ではメール送信フローをご利用ください。
+          このセッションは以前のフロー（リンク共有型）です。
         </section>
       )}
 
       {session.status === "completed" && (
         <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-100">確定済み</h2>
-          {session.participantEmail && (
-            <p className="mt-1 text-xs text-zinc-300">参加者: {session.participantEmail}</p>
-          )}
+          <p className="mt-1 text-xs text-zinc-300">参加者: Bさん</p>
           {session.calendarCreated ? (
             <>
               <p className="mt-2 text-xs text-zinc-300">

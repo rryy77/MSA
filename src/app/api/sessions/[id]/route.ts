@@ -1,22 +1,13 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/appUrl";
+import { getMsaConfig } from "@/lib/msaConfig";
+import { getMsaSessionFromCookies } from "@/lib/msaSession";
 import { getSelectableDatesJst } from "@/lib/dateRange";
-import {
-  buildParticipantInvitePayload,
-  isOutboundEmailConfigured,
-  sendOrganizerParticipantRepliedEmail,
-  sendParticipantInviteEmail,
-} from "@/lib/mailer";
+import { buildParticipantInvitePayload } from "@/lib/mailer";
 import { applyGoogleCalendarToSession } from "@/lib/googleCalendarFinalize";
-import {
-  fetchProfileByEmail,
-  fetchProfileEmail,
-  insertInviteNotification,
-} from "@/lib/inviteInbox";
+import { insertInviteNotification } from "@/lib/inviteInbox";
 import { buildSlotsDetailed, buildSlotsFromSchedule } from "@/lib/slots";
-import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
-import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service";
 import { persistSessionOrError } from "@/lib/sessionStorageResponse";
 import { getSession } from "@/lib/store";
 import type { Session } from "@/lib/types";
@@ -29,17 +20,45 @@ type PatchBody =
   | { action: "organizer_round1"; slotIds: string[] }
   | { action: "participant"; token: string; slotIds: string[] }
   | { action: "organizer_final"; slotIds: string[] }
-  | { action: "wizard_finalize"; participantUserId?: string }
-  | { action: "send_schedule_invite"; participantEmail: string }
+  | { action: "wizard_finalize" }
+  | { action: "send_schedule_invite" }
   | { action: "participant_submit_availability"; slotIds: string[] }
   | { action: "participant_submit_availability_token"; token: string; slotIds: string[] }
   | { action: "organizer_confirm_final"; slotIds: string[] };
 
 const HM = /^\d{1,2}:\d{2}$/;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function isUuid(s: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+/** B が確定したあと、A にアプリ内通知・プッシュ・LINE のみ（メールは送らない） */
+async function notifyOrganizerSessionFinalized(
+  sessionP: Session,
+  cfg: { organizerId: string; participantId: string },
+) {
+  const basePush = getAppBaseUrl();
+  const sessionUrl = `${basePush}/session/${sessionP.id}`;
+  if (sessionP.organizerUserId) {
+    fireAndForgetPush(sessionP.organizerUserId, {
+      title: "MSA: 日程が確定しました",
+      body: "参加者が候補を確定しました",
+      url: sessionUrl,
+    });
+    fireAndForgetLineMessagingForUser(
+      sessionP.organizerUserId,
+      `MSA\n参加者が日程を確定しました。\n${sessionUrl}`,
+    );
+  }
+  try {
+    await insertInviteNotification({
+      sessionId: sessionP.id,
+      recipientUserId: cfg.organizerId,
+      organizerUserId: cfg.participantId,
+      subject: "MSA: 参加者が日程を確定しました",
+      textBody: `参加者が日程を確定しました。\n\n開く: ${sessionUrl}`,
+      htmlBody: `<p>参加者が日程を確定しました。</p><p><a href="${sessionUrl}">セッションを開く</a></p>`,
+      inviteUrl: sessionUrl,
+    });
+  } catch (e) {
+    console.error("organizer_finalize_inbox", e);
+  }
 }
 
 function withDefaults(s: Session): Session {
@@ -54,19 +73,19 @@ function slotIdSet(s: Session) {
 
 export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const supabase = await createClient();
-  if (!supabase) {
-    return supabaseNotConfiguredResponse();
+  let cfg;
+  try {
+    cfg = getMsaConfig();
+  } catch {
+    return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
   }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const msa = getMsaSessionFromCookies(await cookies());
+  if (!msa || msa.role !== "organizer" || msa.uid !== cfg.organizerId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const raw = await getSession(id);
   if (!raw) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  if (!raw.organizerUserId || raw.organizerUserId !== user.id) {
+  if (!raw.organizerUserId || raw.organizerUserId !== msa.uid) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const session = withDefaults(raw);
@@ -112,8 +131,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ session });
   }
 
-  /** メールリンク用: ログイン不要。participantToken で本人確認 */
+  /** トークンリンク用: ログイン不要。確定は B のみ → A へ通知のみ、A の Google カレンダーに反映 */
   if (body.action === "participant_submit_availability_token") {
+    let cfgToken;
+    try {
+      cfgToken = getMsaConfig();
+    } catch {
+      return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
+    }
     const sessionP = withDefaults(raw);
     if (sessionP.status !== "awaiting_participant_availability") {
       return NextResponse.json({ error: "invalid_status" }, { status: 409 });
@@ -130,66 +155,54 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
       }
     }
+    if (!sessionP.organizerUserId) {
+      return NextResponse.json({ error: "legacy_session" }, { status: 403 });
+    }
+
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
-    sessionP.status = "awaiting_organizer_confirm";
+    sessionP.organizerFinalIds = body.slotIds;
+    sessionP.participantEmail = cfgToken.participantEmail;
+    sessionP.status = "completed";
+    sessionP.finalizedAt = new Date().toISOString();
+
+    const { calendarWarning } = await applyGoogleCalendarToSession(
+      sessionP.organizerUserId,
+      sessionP,
+      body.slotIds,
+    );
     {
       const persistErr = await persistSessionOrError(sessionP);
       if (persistErr) return persistErr;
     }
 
-    const basePush = getAppBaseUrl();
-    fireAndForgetPush(sessionP.organizerUserId, {
-      title: "MSA: 日程の返信",
-      body: "参加者が候補を選びました",
-      url: `${basePush}/session/${sessionP.id}`,
+    await notifyOrganizerSessionFinalized(sessionP, {
+      organizerId: cfgToken.organizerId,
+      participantId: cfgToken.participantId,
     });
 
-    const service = createServiceRoleClient();
-    if (sessionP.organizerUserId && isOutboundEmailConfigured() && service) {
-      const pickedSlots = sessionP.slots.filter((s) =>
-        sessionP.participantPreferredSlotIds?.includes(s.id),
-      );
-      try {
-        const orgEmail = await fetchProfileEmail(service, sessionP.organizerUserId);
-        if (orgEmail) {
-          const base = getAppBaseUrl();
-          const sessionUrl = `${base}/session/${sessionP.id}`;
-          await sendOrganizerParticipantRepliedEmail(orgEmail, sessionUrl, {
-            sessionId: sessionP.id,
-            participantSlots: pickedSlots,
-          });
-          if (sessionP.organizerUserId) {
-            fireAndForgetLineMessagingForUser(
-              sessionP.organizerUserId,
-              `MSA\n参加者が日程候補を返信しました。メールをご確認ください。\n${sessionUrl}`,
-            );
-          }
-        }
-      } catch (e) {
-        console.error("organizer_reply_email", e);
-      }
-    }
-
-    return NextResponse.json({ session: sessionP });
+    return NextResponse.json({
+      session: sessionP,
+      ...(calendarWarning ? { calendarWarning } : {}),
+    });
   }
 
   if (body.action === "participant_submit_availability") {
-    const supabaseP = await createClient();
-    if (!supabaseP) {
-      return supabaseNotConfiguredResponse();
+    let cfg;
+    try {
+      cfg = getMsaConfig();
+    } catch {
+      return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
     }
-    const {
-      data: { user: participantUser },
-    } = await supabaseP.auth.getUser();
-    if (!participantUser) {
+    const msaP = getMsaSessionFromCookies(await cookies());
+    if (!msaP || msaP.role !== "participant" || msaP.uid !== cfg.participantId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const sessionP = withDefaults(raw);
     if (sessionP.status !== "awaiting_participant_availability") {
       return NextResponse.json({ error: "invalid_status" }, { status: 409 });
     }
-    if (sessionP.participantUserId !== participantUser.id) {
+    if (sessionP.participantUserId !== msaP.uid) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
     if (!body.slotIds?.length) {
@@ -201,57 +214,46 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         return NextResponse.json({ error: "invalid_slot" }, { status: 400 });
       }
     }
+    if (!sessionP.organizerUserId) {
+      return NextResponse.json({ error: "legacy_session" }, { status: 403 });
+    }
+
     sessionP.participantPreferredSlotIds = body.slotIds;
     sessionP.participantIds = body.slotIds;
-    sessionP.status = "awaiting_organizer_confirm";
+    sessionP.organizerFinalIds = body.slotIds;
+    sessionP.participantEmail = cfg.participantEmail;
+    sessionP.status = "completed";
+    sessionP.finalizedAt = new Date().toISOString();
+
+    const { calendarWarning } = await applyGoogleCalendarToSession(
+      sessionP.organizerUserId,
+      sessionP,
+      body.slotIds,
+    );
     {
       const persistErr = await persistSessionOrError(sessionP);
       if (persistErr) return persistErr;
     }
 
-    const basePush = getAppBaseUrl();
-    fireAndForgetPush(sessionP.organizerUserId, {
-      title: "MSA: 日程の返信",
-      body: "参加者が候補を選びました",
-      url: `${basePush}/session/${sessionP.id}`,
+    await notifyOrganizerSessionFinalized(sessionP, {
+      organizerId: cfg.organizerId,
+      participantId: cfg.participantId,
     });
 
-    if (sessionP.organizerUserId && isOutboundEmailConfigured()) {
-      const pickedSlots = sessionP.slots.filter((s) =>
-        sessionP.participantPreferredSlotIds?.includes(s.id),
-      );
-      try {
-        const orgEmail = await fetchProfileEmail(supabaseP, sessionP.organizerUserId);
-        if (orgEmail) {
-          const base = getAppBaseUrl();
-          const sessionUrl = `${base}/session/${sessionP.id}`;
-          await sendOrganizerParticipantRepliedEmail(orgEmail, sessionUrl, {
-            sessionId: sessionP.id,
-            participantSlots: pickedSlots,
-          });
-          if (sessionP.organizerUserId) {
-            fireAndForgetLineMessagingForUser(
-              sessionP.organizerUserId,
-              `MSA\n参加者が日程候補を返信しました。メールをご確認ください。\n${sessionUrl}`,
-            );
-          }
-        }
-      } catch (e) {
-        console.error("organizer_reply_email", e);
-      }
-    }
-
-    return NextResponse.json({ session: sessionP });
+    return NextResponse.json({
+      session: sessionP,
+      ...(calendarWarning ? { calendarWarning } : {}),
+    });
   }
 
-  const supabase = await createClient();
-  if (!supabase) {
-    return supabaseNotConfiguredResponse();
+  let cfgOrg;
+  try {
+    cfgOrg = getMsaConfig();
+  } catch {
+    return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
   }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const msaOrg = getMsaSessionFromCookies(await cookies());
+  if (!msaOrg || msaOrg.role !== "organizer" || msaOrg.uid !== cfgOrg.organizerId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -259,7 +261,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (!session.organizerUserId) {
     return NextResponse.json({ error: "legacy_session" }, { status: 403 });
   }
-  if (session.organizerUserId !== user.id) {
+  if (session.organizerUserId !== msaOrg.uid) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -320,26 +322,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (!session.slots.length) {
       return NextResponse.json({ error: "build_slots_first" }, { status: 409 });
     }
-    const em =
-      typeof body.participantEmail === "string" ? body.participantEmail.trim().toLowerCase() : "";
-    if (!em || !EMAIL_RE.test(em)) {
-      return NextResponse.json({ error: "invalid_participant_email" }, { status: 400 });
-    }
-
-    const profile = await fetchProfileByEmail(supabase, em);
-    if (!profile) {
-      return NextResponse.json(
-        { error: "participant_not_registered", message: "このメールはアプリ未登録です" },
-        { status: 400 },
-      );
-    }
-    if (profile.id === user.id) {
+    const participantUserId = cfgOrg.participantId;
+    const em = cfgOrg.participantEmail;
+    if (participantUserId === msaOrg.uid) {
       return NextResponse.json({ error: "participant_is_self" }, { status: 400 });
     }
 
     const allIds = session.slots.map((s) => s.id);
     session.organizerRound1Ids = allIds;
-    session.participantUserId = profile.id;
+    session.participantUserId = participantUserId;
     session.participantEmail = em;
     session.status = "awaiting_participant_availability";
     session.scheduleInviteSentAt = new Date().toISOString();
@@ -353,12 +344,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       slots: session.slots,
     });
 
-    let inviteEmailSent = false;
     try {
-      await insertInviteNotification(supabase, {
+      await insertInviteNotification({
         sessionId: session.id,
-        recipientUserId: profile.id,
-        organizerUserId: user.id,
+        recipientUserId: participantUserId,
+        organizerUserId: msaOrg.uid,
         subject: payload.subject,
         textBody: payload.text,
         htmlBody: payload.html,
@@ -375,35 +365,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       );
     }
 
-    fireAndForgetPush(profile.id, {
+    fireAndForgetPush(participantUserId, {
       title: "MSA: 参加案内",
       body: "日程調整の案内が届きました",
       url: respondUrl,
     });
-
-    const recipientAddr = profile.email ?? em;
-    if (isOutboundEmailConfigured() && recipientAddr) {
-      try {
-        await sendParticipantInviteEmail(recipientAddr, respondUrl, {
-          sessionId: session.id,
-          slots: session.slots,
-        });
-        inviteEmailSent = true;
-        session.inviteEmailSentAt = new Date().toISOString();
-        fireAndForgetLineMessagingForUser(
-          profile.id,
-          `MSA\n日程調整の案内メールを送信しました。\n${respondUrl}`,
-        );
-      } catch (e) {
-        console.error("invite_email_optional", e);
-      }
-    }
+    fireAndForgetLineMessagingForUser(
+      participantUserId,
+      `MSA\n日程調整の案内を送信しました（アプリ内通知）。\n${respondUrl}`,
+    );
 
     {
       const persistErr = await persistSessionOrError(session);
       if (persistErr) return persistErr;
     }
-    return NextResponse.json({ session, inviteEmailSent });
+    return NextResponse.json({ session });
   }
 
   if (body.action === "wizard_finalize") {
@@ -414,20 +390,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ error: "build_slots_first" }, { status: 409 });
     }
 
-    let participantUserId: string | undefined;
-    if (
-      "participantUserId" in body &&
-      typeof body.participantUserId === "string" &&
-      body.participantUserId.trim()
-    ) {
-      const pid = body.participantUserId.trim();
-      if (!isUuid(pid)) {
-        return NextResponse.json({ error: "invalid_participant_user" }, { status: 400 });
-      }
-      if (pid === user.id) {
-        return NextResponse.json({ error: "participant_is_self" }, { status: 400 });
-      }
-      participantUserId = pid;
+    const participantUserId = cfgOrg.participantId;
+    if (participantUserId === msaOrg.uid) {
+      return NextResponse.json({ error: "participant_is_self" }, { status: 400 });
     }
 
     const all = session.slots.map((x) => x.id);
@@ -437,82 +402,49 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
     session.emailSentAt = new Date().toISOString();
-    if (participantUserId) {
-      session.participantUserId = participantUserId;
-    }
+    session.participantUserId = participantUserId;
+    session.participantEmail = cfgOrg.participantEmail;
 
-    let recipientEmail: string | undefined;
-    if (participantUserId) {
-      recipientEmail =
-        (await fetchProfileEmail(supabase, participantUserId)) ?? undefined;
-      if (!recipientEmail) {
-        return NextResponse.json({ error: "profile_not_found" }, { status: 400 });
-      }
-      session.participantEmail = recipientEmail;
-    }
-
-    const { calendarWarning } = await applyGoogleCalendarToSession(
-      supabase,
-      user.id,
-      session,
-      all,
-    );
+    const { calendarWarning } = await applyGoogleCalendarToSession(msaOrg.uid, session, all);
 
     const base = getAppBaseUrl();
     const inviteUrl = `${base}/p/${encodeURIComponent(session.participantToken)}`;
 
-    let inviteEmailSent = false;
+    const payload = buildParticipantInvitePayload(inviteUrl, {
+      sessionId: session.id,
+      slots: session.slots,
+    });
 
-    if (participantUserId && recipientEmail) {
-      const payload = buildParticipantInvitePayload(inviteUrl, {
+    try {
+      await insertInviteNotification({
         sessionId: session.id,
-        slots: session.slots,
+        recipientUserId: participantUserId,
+        organizerUserId: msaOrg.uid,
+        subject: payload.subject,
+        textBody: payload.text,
+        htmlBody: payload.html,
+        inviteUrl,
       });
-
-      try {
-        await insertInviteNotification(supabase, {
-          sessionId: session.id,
-          recipientUserId: participantUserId,
-          organizerUserId: user.id,
-          subject: payload.subject,
-          textBody: payload.text,
-          htmlBody: payload.html,
-          inviteUrl,
-        });
-      } catch (e) {
-        console.error(e);
-        return NextResponse.json(
-          {
-            error: "inbox_save_failed",
-            detail: e instanceof Error ? e.message : String(e),
-          },
-          { status: 502 },
-        );
-      }
-
-      fireAndForgetPush(participantUserId, {
-        title: "MSA: 参加案内",
-        body: "日程調整の案内が届きました",
-        url: inviteUrl,
-      });
-
-      if (isOutboundEmailConfigured()) {
-        try {
-          await sendParticipantInviteEmail(recipientEmail, inviteUrl, {
-            sessionId: session.id,
-            slots: session.slots,
-          });
-          inviteEmailSent = true;
-          session.inviteEmailSentAt = new Date().toISOString();
-          fireAndForgetLineMessagingForUser(
-            participantUserId,
-            `MSA\n日程調整の案内メールを送信しました。\n${inviteUrl}`,
-          );
-        } catch (e) {
-          console.error("invite_email_optional", e);
-        }
-      }
+    } catch (e) {
+      console.error(e);
+      return NextResponse.json(
+        {
+          error: "inbox_save_failed",
+          detail: e instanceof Error ? e.message : String(e),
+        },
+        { status: 502 },
+      );
     }
+
+    fireAndForgetPush(participantUserId, {
+      title: "MSA: 参加案内",
+      body: "日程調整の案内が届きました",
+      url: inviteUrl,
+    });
+    fireAndForgetLineMessagingForUser(
+      participantUserId,
+      `MSA\n日程調整の案内を送信しました（アプリ内通知）。\n${inviteUrl}`,
+    );
 
     {
       const persistErr = await persistSessionOrError(session);
@@ -520,7 +452,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     return NextResponse.json({
       session,
-      inviteEmailSent,
       ...(calendarWarning ? { calendarWarning } : {}),
     });
   }
@@ -564,8 +495,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
     const { calendarWarning } = await applyGoogleCalendarToSession(
-      supabase,
-      user.id,
+      msaOrg.uid,
       session,
       body.slotIds,
     );
@@ -612,8 +542,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     session.status = "completed";
     session.finalizedAt = new Date().toISOString();
     const { calendarWarning } = await applyGoogleCalendarToSession(
-      supabase,
-      user.id,
+      msaOrg.uid,
       session,
       finalIds,
     );

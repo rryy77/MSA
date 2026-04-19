@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 
 const SKIP_AUTO_KEY = "msa_calendar_skip_auto";
 
@@ -32,6 +31,22 @@ export default function SettingsPage() {
     loggedIn: boolean;
   } | null>(null);
   const [lineMsg, setLineMsg] = useState<string | null>(null);
+  const [msaRole, setMsaRole] = useState<"organizer" | "participant" | null>(null);
+
+  useEffect(() => {
+    fetch("/api/msa/session", { credentials: "include" })
+      .then((r) => r.json())
+      .then((j: { role?: string }) => {
+        setMsaRole(
+          j.role === "organizer"
+            ? "organizer"
+            : j.role === "participant"
+              ? "participant"
+              : null,
+        );
+      })
+      .catch(() => setMsaRole(null));
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -158,6 +173,7 @@ export default function SettingsPage() {
   /** 未連携かつ OAuth 設定ありのとき、この画面で自動的に Google 認証へ誘導（失敗直後・「あとで」選択時はスキップ） */
   useEffect(() => {
     if (
+      msaRole !== "organizer" ||
       calLoading ||
       !calStatus?.oauthConfigured ||
       !calStatus.loggedIn ||
@@ -173,7 +189,7 @@ export default function SettingsPage() {
       /* ignore */
     }
     setAutoOAuthCountdown(5);
-  }, [calLoading, calStatus]);
+  }, [calLoading, calStatus, msaRole]);
 
   useEffect(() => {
     if (autoOAuthCountdown === null) return;
@@ -199,10 +215,7 @@ export default function SettingsPage() {
   async function signOut() {
     setPending(true);
     try {
-      const supabase = createClient();
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
+      await fetch("/api/msa/session", { method: "DELETE", credentials: "include" });
       router.push("/login");
       router.refresh();
     } finally {
@@ -251,7 +264,7 @@ export default function SettingsPage() {
 
   return (
     <div className="relative flex min-h-full flex-1 flex-col justify-center gap-4 sm:min-h-[min(100%,36rem)]">
-      {autoOAuthCountdown !== null && autoOAuthCountdown > 0 && (
+      {msaRole === "organizer" && autoOAuthCountdown !== null && autoOAuthCountdown > 0 && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px]"
           role="dialog"
@@ -294,7 +307,7 @@ export default function SettingsPage() {
       <header className="shrink-0">
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">設定</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          アカウントは Supabase（Google ログイン）で管理されています。
+          ログインは「A / B の選択」のみです。データ保存に Supabase を使います。
         </p>
       </header>
       {calMsg && (
@@ -315,6 +328,7 @@ export default function SettingsPage() {
             {pending ? "処理中…" : "ログアウト"}
           </button>
         </li>
+        {msaRole === "organizer" && (
         <li className="border-b border-zinc-800 px-4 py-4">
           <p className="text-sm font-medium">Google カレンダー</p>
           <p className="mt-1 text-xs text-zinc-500">
@@ -387,6 +401,7 @@ export default function SettingsPage() {
             </div>
           )}
         </li>
+        )}
         <li className="border-b border-zinc-800 px-4 py-4">
           <p className="text-sm font-medium">LINE 通知（メールと同タイミング）</p>
           <p className="mt-1 text-xs text-zinc-500">

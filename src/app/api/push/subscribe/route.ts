@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getMsaAuth } from "@/lib/msaApiAuth";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 
 type SubBody = {
   subscription?: {
@@ -9,15 +10,12 @@ type SubBody = {
 };
 
 export async function POST(req: Request) {
-  const supabase = await createClient();
-  if (!supabase) {
+  const auth = await getMsaAuth();
+  if ("error" in auth) return auth.error;
+
+  const service = createServiceRoleClient();
+  if (!service) {
     return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
-  }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   let body: SubBody;
@@ -32,9 +30,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_subscription" }, { status: 400 });
   }
 
-  const { error } = await supabase.from("push_subscriptions").upsert(
+  const { error } = await service.from("push_subscriptions").upsert(
     {
-      user_id: user.id,
+      user_id: auth.ok.msa.uid,
       endpoint: sub.endpoint,
       p256dh: sub.keys.p256dh,
       auth: sub.keys.auth,
@@ -49,15 +47,12 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const supabase = await createClient();
-  if (!supabase) {
+  const auth = await getMsaAuth();
+  if ("error" in auth) return auth.error;
+
+  const service = createServiceRoleClient();
+  if (!service) {
     return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
-  }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   let body: { endpoint?: string };
@@ -70,11 +65,11 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "endpoint_required" }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const { error } = await service
     .from("push_subscriptions")
     .delete()
     .eq("endpoint", body.endpoint)
-    .eq("user_id", user.id);
+    .eq("user_id", auth.ok.msa.uid);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

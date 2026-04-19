@@ -31,6 +31,16 @@ function ScheduleWizard() {
   const [sessions, setSessions] = useState<Summary[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const searchParams = useSearchParams();
+  const [actorRole, setActorRole] = useState<"organizer" | "participant" | null>(null);
+
+  useEffect(() => {
+    fetch("/api/msa/session", { credentials: "include" })
+      .then((r) => r.json())
+      .then((j: { role?: string }) => {
+        setActorRole(j.role === "organizer" ? "organizer" : j.role === "participant" ? "participant" : null);
+      })
+      .catch(() => setActorRole(null));
+  }, []);
 
   useEffect(() => {
     if (searchParams.get("view") === "confirm") {
@@ -135,6 +145,19 @@ function ScheduleWizard() {
     } finally {
       setPending(false);
     }
+  }
+
+  if (actorRole === "participant") {
+    return (
+      <div className="flex flex-1 flex-col gap-4 pb-6">
+        <Link href="/" className="text-sm text-sky-400 hover:underline">
+          ← メッセージに戻る
+        </Link>
+        <p className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-6 text-sm text-zinc-300">
+          予定の作成は主催者（A）のみです。ログインを切り替える場合は設定からログアウトしてください。
+        </p>
+      </div>
+    );
   }
 
   return (

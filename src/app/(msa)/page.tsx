@@ -36,38 +36,28 @@ export default function MessagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [role, setRole] = useState<"organizer" | "participant" | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [sr, ir] = await Promise.all([
-        fetch("/api/sessions", { cache: "no-store", credentials: "include" }),
-        fetch("/api/inbox", { cache: "no-store", credentials: "include" }),
-      ]);
-      const sJson = (await sr.json().catch(() => ({}))) as {
-        error?: string;
-        message?: string;
-        sessions?: Summary[];
+      const me = await fetch("/api/msa/session", { cache: "no-store", credentials: "include" });
+      const meJ = (await me.json().catch(() => ({}))) as {
+        configured?: boolean;
+        actor?: string;
+        role?: string;
       };
-      if (sr.status === 503 && sJson.error === "supabase_not_configured") {
-        setError(
-          "Supabase の環境変数がサーバーで読み込めていません。Vercel の Project → Settings → Environment Variables に NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を「Production」に設定し、保存後に再デプロイしてください（ローカルの .env.local はデプロイに含まれません）。",
-        );
+      if (!me.ok || !meJ.role) {
+        setRole(null);
         setSessions([]);
         setInbox([]);
+        setError("セッションを確認できません。ログインし直してください。");
         return;
       }
-      if (!sr.ok) {
-        setSessions([]);
-        setError(
-          typeof sJson.message === "string"
-            ? sJson.message
-            : `日程一覧を読み込めません（HTTP ${sr.status}）`,
-        );
-      } else {
-        setSessions(sJson.sessions ?? []);
-      }
+      const r = meJ.role === "organizer" ? "organizer" : "participant";
+      setRole(r);
 
+      const ir = await fetch("/api/inbox", { cache: "no-store", credentials: "include" });
       const irText = await ir.text();
       if (!ir.ok) {
         setInbox([]);
@@ -80,12 +70,12 @@ export default function MessagePage() {
         const hint =
           ij.detail ||
           (ij.error === "inbox_fetch_failed"
-            ? "テーブル invite_notifications が無い、または RLS の可能性があります。Supabase の SQL Editor で supabase/migrations/001_profiles_and_invites.sql を実行してください。"
+            ? "テーブル invite_notifications が無い可能性があります。Supabase のマイグレーションを確認してください。"
             : null);
         setError(
           hint
-            ? `受信トレイを読み込めません（502）: ${hint}`
-            : "受信トレイを読み込めませんでした（502）。",
+            ? `受信トレイを読み込めません: ${hint}`
+            : "受信トレイを読み込めませんでした。",
         );
       } else {
         try {
@@ -94,6 +84,27 @@ export default function MessagePage() {
         } catch {
           setInbox([]);
         }
+      }
+
+      if (r === "organizer") {
+        const sr = await fetch("/api/sessions", { cache: "no-store", credentials: "include" });
+        const sJson = (await sr.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+          sessions?: Summary[];
+        };
+        if (!sr.ok) {
+          setSessions([]);
+          setError(
+            typeof sJson.message === "string"
+              ? sJson.message
+              : `日程一覧を読み込めません（HTTP ${sr.status}）`,
+          );
+        } else {
+          setSessions(sJson.sessions ?? []);
+        }
+      } else {
+        setSessions([]);
       }
     } catch {
       setError("一覧を読み込めませんでした");
@@ -137,7 +148,11 @@ export default function MessagePage() {
       <header>
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">メッセージ</h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          ログイン中のみ、参加案内や進行中の調整を確認できます。
+          {role === "organizer"
+            ? "A（主催者）としてログイン中です。"
+            : role === "participant"
+              ? "B（参加者）としてログイン中です。"
+              : ""}
         </p>
       </header>
 
@@ -147,7 +162,7 @@ export default function MessagePage() {
           <p className="text-sm text-zinc-500">読み込み中…</p>
         ) : inbox.length === 0 ? (
           <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-6 text-center text-sm text-zinc-500">
-            参加案内はまだありません。主催者にこのアプリ上のユーザーとして選んでもらう必要があります。
+            参加案内はまだありません。主催者（A）が候補を送るとここに表示されます。
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -182,34 +197,40 @@ export default function MessagePage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 shadow-sm ring-1 ring-zinc-800">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Link
-            href="/schedule"
-            className="flex-1 rounded-xl bg-teal-600 px-4 py-3.5 text-center text-base font-semibold text-white shadow-sm transition hover:bg-teal-500"
-          >
-            予定作成
-          </Link>
-          <Link
-            href="/schedule?view=confirm"
-            className="flex-1 rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-3.5 text-center text-base font-semibold text-zinc-100 transition hover:bg-zinc-700"
-          >
-            予定確認
-          </Link>
-        </div>
-        <p className="mt-3 text-center text-xs text-zinc-500">
-          確定時に参加者へ送る場合は、アプリに登録したユーザーを選びます。
-        </p>
-      </section>
+      {role === "organizer" && (
+        <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 shadow-sm ring-1 ring-zinc-800">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/schedule"
+              className="flex-1 rounded-xl bg-teal-600 px-4 py-3.5 text-center text-base font-semibold text-white shadow-sm transition hover:bg-teal-500"
+            >
+              予定作成
+            </Link>
+            <Link
+              href="/schedule?view=confirm"
+              className="flex-1 rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-3.5 text-center text-base font-semibold text-zinc-100 transition hover:bg-zinc-700"
+            >
+              予定確認
+            </Link>
+          </div>
+          <p className="mt-3 text-center text-xs text-zinc-500">
+            候補作成後、B さんへはメール入力なしで送信できます。
+          </p>
+        </section>
+      )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-300">進行中の調整（主催）</h2>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-300">
+          {role === "participant" ? "進行中の調整（参照）" : "進行中の調整（主催）"}
+        </h2>
         {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
         {loading ? (
           <p className="text-sm text-zinc-500">読み込み中…</p>
         ) : sessions.length === 0 ? (
           <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-500">
-            まだありません。「予定作成」から始めてください。
+            {role === "participant"
+              ? "主催者の一覧は A さんの画面に表示されます。"
+              : "まだありません。「予定作成」から始めてください。"}
           </p>
         ) : (
           <ul className="flex flex-col gap-2">

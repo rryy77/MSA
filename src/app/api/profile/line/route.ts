@@ -1,19 +1,11 @@
 import { NextResponse } from "next/server";
-import { supabaseNotConfiguredResponse } from "@/lib/supabase/api";
-import { createClient } from "@/lib/supabase/server";
+import { getMsaAuth } from "@/lib/msaApiAuth";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 
 /** LINE Messaging 連携を解除（line_messaging_user_id を削除） */
 export async function PATCH(req: Request) {
-  const supabase = await createClient();
-  if (!supabase) {
-    return supabaseNotConfiguredResponse();
-  }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await getMsaAuth();
+  if ("error" in auth) return auth.error;
 
   let body: { disconnect?: boolean };
   try {
@@ -26,13 +18,18 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const service = createServiceRoleClient();
+  if (!service) {
+    return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
+  }
+
+  const { error } = await service
     .from("profiles")
     .update({
       line_messaging_user_id: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", user.id);
+    .eq("id", auth.ok.msa.uid);
 
   if (error) {
     return NextResponse.json(
