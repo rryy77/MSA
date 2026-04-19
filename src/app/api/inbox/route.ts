@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getMsaAuth } from "@/lib/msaApiAuth";
+import { maxIsoEndFromSlots } from "@/lib/inviteInbox";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { getSession } from "@/lib/store";
 
 export async function GET() {
   const auth = await getMsaAuth();
@@ -33,5 +35,32 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json({ items: data ?? [] });
+  const items = data ?? [];
+  const cfg = auth.ok.cfg;
+  const uid = auth.ok.msa.uid;
+  const toDelete: string[] = [];
+
+  for (const row of items) {
+    const sess = await getSession(row.session_id);
+    if (!sess) {
+      toDelete.push(row.id);
+      continue;
+    }
+    if (uid === cfg.participantId && sess.status === "awaiting_participant_availability") {
+      continue;
+    }
+    if (sess.status === "completed" && sess.slots?.length) {
+      const maxEnd = maxIsoEndFromSlots(sess.slots);
+      if (maxEnd && new Date(maxEnd).getTime() < Date.now()) {
+        toDelete.push(row.id);
+      }
+    }
+  }
+
+  if (toDelete.length) {
+    await service.from("invite_notifications").delete().in("id", toDelete);
+  }
+
+  const pruned = items.filter((row) => !toDelete.includes(row.id));
+  return NextResponse.json({ items: pruned });
 }

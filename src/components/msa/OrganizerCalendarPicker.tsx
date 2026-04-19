@@ -28,8 +28,8 @@ type Props = {
   onAnchorChange: (d: DateTime) => void;
   suggestions?: DayRememberSuggestion[];
   onApplySuggestion?: (s: DayRememberSuggestion) => void;
-  /** 第1〜第3のどれを選んだか表示（光らせる） */
-  highlightedSuggestionRank?: 1 | 2 | 3 | null;
+  /** 第1〜第3のどれを選んだか表示（複数可） */
+  highlightedSuggestionRanks?: Set<1 | 2 | 3>;
 };
 
 export function OrganizerCalendarPicker({
@@ -43,7 +43,7 @@ export function OrganizerCalendarPicker({
   onAnchorChange,
   suggestions,
   onApplySuggestion,
-  highlightedSuggestionRank,
+  highlightedSuggestionRanks,
 }: Props) {
   const blocked = calendarBlockedYmd ?? new Set<string>();
 
@@ -69,11 +69,11 @@ export function OrganizerCalendarPicker({
       {suggestions && suggestions.length > 0 && onApplySuggestion && (
         <div className="rounded-2xl border border-zinc-600/80 bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
           <p className="text-[13px] leading-snug text-zinc-400">
-            よく使う曜日・時間を提案しています。タップで日付と時間に反映され、もう一度タップすると解除できます。
+            よく使う曜日・時間を提案しています。複数タップで複数候補を選べます。もう一度タップするとその候補だけ解除されます。週を変えても選択は維持されます。
           </p>
           <ul className="mt-4 flex flex-col gap-3">
             {suggestions.map((s) => {
-              const active = highlightedSuggestionRank === s.rank;
+              const active = highlightedSuggestionRanks?.has(s.rank) ?? false;
               return (
                 <li key={`${s.rank}-${s.dow}-${s.startMin}`}>
                   <button

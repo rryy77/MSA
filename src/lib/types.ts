@@ -6,6 +6,7 @@ export type SessionStatus =
   | "awaiting_participant"
   | "awaiting_organizer_final"
   | "awaiting_organizer_confirm"
+  | "participant_declined"
   | "completed";
 
 export type Session = {
@@ -40,4 +41,6 @@ export type Session = {
   inviteEmailSentAt?: string;
   /** 日程候補を相手に送った日時（アプリ内通知含む） */
   scheduleInviteSentAt?: string;
+  /** B が「候補が合わない」と回答した日時 */
+  participantDeclinedAt?: string;
 };

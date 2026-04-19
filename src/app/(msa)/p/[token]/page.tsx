@@ -101,6 +101,30 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
   const canAnswerOld = session?.status === "awaiting_participant";
   const canAnswerNew = session?.status === "awaiting_participant_availability";
 
+  async function rejectSchedule() {
+    if (!session || !token || !canAnswerNew) return;
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${session.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          action: "participant_reject_schedule_token",
+          token,
+        }),
+      });
+      if (!res.ok) throw new Error("failed");
+      const data = await res.json();
+      setSession(data.session);
+    } catch {
+      setError("送信に失敗しました");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function submit() {
     if (!session || !token) return;
     if (!canAnswerOld && !canAnswerNew) return;
@@ -156,6 +180,15 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
         <p className="mt-2 text-xs text-teal-200/90">
           主催者（Aさん）のカレンダーに反映され、通知が届きます。
         </p>
+      </div>
+    );
+  }
+
+  if (session.status === "participant_declined") {
+    return (
+      <div className="rounded-2xl border border-zinc-600 bg-zinc-900/80 p-6 text-center text-sm text-zinc-200">
+        <p className="font-medium">候補は見送りました</p>
+        <p className="mt-2 text-xs text-zinc-500">主催者（Aさん）へ伝わっています。</p>
       </div>
     );
   }
@@ -251,14 +284,26 @@ export default function ParticipantPage({ params }: { params: Promise<{ token: s
           </li>
         ))}
       </ul>
-      <button
-        type="button"
-        disabled={pending || selected.size === 0}
-        onClick={() => void submit()}
-        className="rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
-      >
-        {canAnswerNew ? "確定する" : "送信"}
-      </button>
+      <div className="flex flex-col gap-2">
+        {canAnswerNew && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => void rejectSchedule()}
+            className="w-full rounded-xl border border-rose-600/80 bg-rose-950/40 py-3 text-sm font-semibold text-rose-100 hover:bg-rose-950/60 disabled:opacity-50"
+          >
+            どの日程も合わない（見送る）
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={pending || selected.size === 0}
+          onClick={() => void submit()}
+          className="rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {canAnswerNew ? "確定する" : "送信"}
+        </button>
+      </div>
     </div>
   );
 }

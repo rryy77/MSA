@@ -28,6 +28,7 @@ const statusLabel: Record<string, string> = {
   awaiting_organizer_confirm: "主催: 確定待ち",
   awaiting_participant: "参加者の回答待ち（旧）",
   awaiting_organizer_final: "主催: 最終（旧）",
+  participant_declined: "参加者が候補を見送り",
   completed: "完了",
 };
 

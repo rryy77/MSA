@@ -108,6 +108,30 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
 
   const canAdjustTime = session?.status === "awaiting_participant_availability";
 
+  async function rejectSchedule() {
+    if (!id || !canAdjustTime) return;
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "participant_reject_schedule" }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j.error as string) || "failed");
+      }
+      setDone(true);
+      router.push("/");
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "送信に失敗しました");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function submit() {
     if (!id || selected.size === 0) {
       setError("1つ以上選んでください");
@@ -176,6 +200,20 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
 
   if (!session) {
     return <p className="py-12 text-center text-sm text-zinc-500">読み込み中…</p>;
+  }
+
+  if (session.status === "participant_declined") {
+    return (
+      <div className="flex flex-1 flex-col gap-4 py-8">
+        <Link href="/" className="text-sm text-teal-400 hover:underline">
+          ← メッセージに戻る
+        </Link>
+        <div className="rounded-2xl border border-zinc-700 bg-zinc-900/80 px-4 py-6 text-center text-sm text-zinc-200">
+          <p className="font-medium">候補は見送りました</p>
+          <p className="mt-2 text-xs text-zinc-500">主催者へ伝わっています。</p>
+        </div>
+      </div>
+    );
   }
 
   const choices = session.organizerRound1Ids
@@ -250,6 +288,16 @@ export default function RespondPage({ params }: { params: Promise<{ id: string }
           </li>
         ))}
       </ul>
+      {canAdjustTime && (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => void rejectSchedule()}
+          className="w-full rounded-xl border border-rose-600/70 bg-rose-950/35 py-3.5 text-sm font-semibold text-rose-100 hover:bg-rose-950/55 disabled:opacity-50"
+        >
+          どの日程も合わない（見送る）
+        </button>
+      )}
       <button
         type="button"
         disabled={pending || selected.size === 0}

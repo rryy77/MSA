@@ -26,6 +26,9 @@ type PatchBody =
   | { action: "send_schedule_invite" }
   | { action: "participant_submit_availability"; slotIds: string[] }
   | { action: "participant_submit_availability_token"; token: string; slotIds: string[] }
+  | { action: "participant_reject_schedule_token"; token: string }
+  | { action: "participant_reject_schedule" }
+  | { action: "organizer_reset_after_decline" }
   | { action: "organizer_confirm_final"; slotIds: string[] };
 
 const HM = /^\d{1,2}:\d{2}$/;
@@ -167,6 +170,47 @@ async function notifyOrganizerSessionFinalized(
     });
   } catch (e) {
     console.error("organizer_finalize_inbox", e);
+  }
+}
+
+/** B が候補を見送ったとき、A に通知（受信トレイ・プッシュ・LINE） */
+async function notifyOrganizerParticipantDeclined(
+  sessionP: Session,
+  cfg: { organizerId: string; participantId: string },
+) {
+  const basePush = getAppBaseUrl();
+  const sessionUrl = `${basePush}/session/${sessionP.id}`;
+  const lineText = [
+    "MSA（日程調整）",
+    "参加者（B）が「候補が合わない」と回答しました。",
+    `開始日（トリガー）: ${sessionP.triggerDateJst}`,
+    "",
+    `セッション: ${sessionUrl}`,
+  ].join("\n");
+
+  fireAndForgetPush(cfg.organizerId, {
+    title: "MSA: B が候補を見送りました",
+    body: "新しい候補を作成できます。タップで開く。",
+    url: sessionUrl,
+  });
+  fireAndForgetLineMessagingForUser(cfg.organizerId, lineText);
+  try {
+    const safeHtml = lineText
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    await insertInviteNotification({
+      sessionId: sessionP.id,
+      recipientUserId: cfg.organizerId,
+      organizerUserId: cfg.participantId,
+      subject: "MSA: 参加者が候補を見送りました",
+      textBody: lineText,
+      htmlBody: `<pre style="white-space:pre-wrap;font-family:inherit">${safeHtml}</pre><p><a href="${sessionUrl}">セッションを開く</a></p>`,
+      inviteUrl: sessionUrl,
+      expiresAt: undefined,
+    });
+  } catch (e) {
+    console.error("organizer_decline_inbox", e);
   }
 }
 
@@ -367,6 +411,64 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
   }
 
+  if (body.action === "participant_reject_schedule_token") {
+    let cfgToken;
+    try {
+      cfgToken = getMsaConfig();
+    } catch {
+      return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
+    }
+    const sessionP = withDefaults(raw);
+    if (sessionP.status !== "awaiting_participant_availability") {
+      return NextResponse.json({ error: "invalid_status" }, { status: 409 });
+    }
+    if (typeof body.token !== "string" || body.token !== sessionP.participantToken) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    sessionP.status = "participant_declined";
+    sessionP.participantDeclinedAt = new Date().toISOString();
+    {
+      const persistErr = await persistSessionOrError(sessionP);
+      if (persistErr) return persistErr;
+    }
+    await notifyOrganizerParticipantDeclined(sessionP, {
+      organizerId: cfgToken.organizerId,
+      participantId: cfgToken.participantId,
+    });
+    return NextResponse.json({ session: sessionP });
+  }
+
+  if (body.action === "participant_reject_schedule") {
+    let cfg;
+    try {
+      cfg = getMsaConfig();
+    } catch {
+      return NextResponse.json({ error: "msa_not_configured" }, { status: 503 });
+    }
+    const msaP = getMsaSessionFromCookies(await cookies());
+    if (!msaP || msaP.role !== "participant" || msaP.uid !== cfg.participantId) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const sessionP = withDefaults(raw);
+    if (sessionP.status !== "awaiting_participant_availability") {
+      return NextResponse.json({ error: "invalid_status" }, { status: 409 });
+    }
+    if (sessionP.participantUserId !== msaP.uid) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    sessionP.status = "participant_declined";
+    sessionP.participantDeclinedAt = new Date().toISOString();
+    {
+      const persistErr = await persistSessionOrError(sessionP);
+      if (persistErr) return persistErr;
+    }
+    await notifyOrganizerParticipantDeclined(sessionP, {
+      organizerId: cfg.organizerId,
+      participantId: cfg.participantId,
+    });
+    return NextResponse.json({ session: sessionP });
+  }
+
   let cfgOrg;
   try {
     cfgOrg = getMsaConfig();
@@ -384,6 +486,23 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   }
   if (session.organizerUserId !== msaOrg.uid) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  if (body.action === "organizer_reset_after_decline") {
+    if (session.status !== "participant_declined") {
+      return NextResponse.json({ error: "invalid_status" }, { status: 409 });
+    }
+    session.status = "awaiting_organizer_round1";
+    session.slots = [];
+    session.organizerRound1Ids = [];
+    session.participantDeclinedAt = undefined;
+    session.scheduleInviteSentAt = undefined;
+    session.emailSentAt = undefined;
+    {
+      const persistErr = await persistSessionOrError(session);
+      if (persistErr) return persistErr;
+    }
+    return NextResponse.json({ session });
   }
 
   if (body.action === "build_slots") {
@@ -472,7 +591,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         textBody: payload.text,
         htmlBody: payload.html,
         inviteUrl: respondUrl,
-        expiresAt: maxIsoEndFromSlots(session.slots),
+        expiresAt: undefined,
       });
     } catch (e) {
       console.error(e);

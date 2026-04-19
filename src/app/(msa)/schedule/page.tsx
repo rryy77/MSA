@@ -47,7 +47,15 @@ function ScheduleWizard() {
   const [busyPickLoading, setBusyPickLoading] = useState(false);
   /** 日付除外計算用の FreeBusy（候補タップ時の重なり判定にも使用） */
   const [pickStepBusy, setPickStepBusy] = useState<{ start: string; end: string }[]>([]);
-  const [highlightedSuggestionRank, setHighlightedSuggestionRank] = useState<1 | 2 | 3 | null>(null);
+  /** DAYREMEMBER 第1〜3がそれぞれどの日付に紐づいているか（単一情報源。ここからハイライトを派生） */
+  const [suggestionRankToYmd, setSuggestionRankToYmd] = useState<Partial<Record<1 | 2 | 3, string>>>(
+    {},
+  );
+
+  const highlightedSuggestionRanks = useMemo(
+    () => new Set(([1, 2, 3] as const).filter((r) => Boolean(suggestionRankToYmd[r]))),
+    [suggestionRankToYmd],
+  );
 
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -157,14 +165,39 @@ function ScheduleWizard() {
       const next = new Set([...prev].filter((ymd) => !calendarBlockedYmd.has(ymd)));
       return next.size === prev.size && [...next].every((y) => prev.has(y)) ? prev : next;
     });
+    setSuggestionRankToYmd((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const r of [1, 2, 3] as const) {
+        const y = next[r];
+        if (y && calendarBlockedYmd.has(y)) {
+          delete next[r];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
   }, [calendarBlockedYmd]);
 
   function toggleYmd(ymd: string) {
-    setHighlightedSuggestionRank(null);
     setSelectedYmd((prev) => {
       const n = new Set(prev);
-      if (n.has(ymd)) n.delete(ymd);
-      else n.add(ymd);
+      if (n.has(ymd)) {
+        n.delete(ymd);
+        setSuggestionRankToYmd((sr) => {
+          const nx = { ...sr };
+          for (const rank of [1, 2, 3] as const) {
+            if (nx[rank] === ymd) delete nx[rank];
+          }
+          return nx;
+        });
+        setTimes((t) => {
+          const { [ymd]: _, ...rest } = t;
+          return rest;
+        });
+      } else {
+        n.add(ymd);
+      }
       return n;
     });
   }
@@ -182,15 +215,27 @@ function ScheduleWizard() {
     }
     setGoogleConnected(true);
     setSelectedYmd(new Set());
-    setHighlightedSuggestionRank(null);
+    setSuggestionRankToYmd({});
     setStep("pickDates");
   }
 
   function applySuggestion(s: DayRememberSuggestion) {
-    if (highlightedSuggestionRank === s.rank) {
-      setHighlightedSuggestionRank(null);
-      setSelectedYmd(new Set());
-      setTimes({});
+    if (suggestionRankToYmd[s.rank]) {
+      const ymd = suggestionRankToYmd[s.rank]!;
+      setSuggestionRankToYmd((prev) => {
+        const next = { ...prev };
+        delete next[s.rank];
+        return next;
+      });
+      setSelectedYmd((prev) => {
+        const n = new Set(prev);
+        n.delete(ymd);
+        return n;
+      });
+      setTimes((prev) => {
+        const { [ymd]: _, ...rest } = prev;
+        return rest;
+      });
       setError(null);
       return;
     }
@@ -210,17 +255,17 @@ function ScheduleWizard() {
     const startStr = `${pad(sh)}:${pad(sm)}`;
     const endStr = `${pad(eh)}:${pad(em)}`;
     if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
-      setHighlightedSuggestionRank(s.rank);
       setError(
         "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、カレンダーを調整してから手動で選んでください。",
       );
       return;
     }
-    setHighlightedSuggestionRank(s.rank);
-    setSelectedYmd(new Set([ymd]));
-    setTimes({
+    setSuggestionRankToYmd((prev) => ({ ...prev, [s.rank]: ymd }));
+    setSelectedYmd((prev) => new Set(prev).add(ymd));
+    setTimes((prev) => ({
+      ...prev,
       [ymd]: { start: startStr, end: endStr },
-    });
+    }));
     setError(null);
   }
 
@@ -262,7 +307,13 @@ function ScheduleWizard() {
   }
 
   function setRange(ymd: string, field: "start" | "end", value: string) {
-    setHighlightedSuggestionRank(null);
+    setSuggestionRankToYmd((prev) => {
+      const next = { ...prev };
+      for (const rank of [1, 2, 3] as const) {
+        if (next[rank] === ymd) delete next[rank];
+      }
+      return next;
+    });
     setTimes((prev) => ({
       ...prev,
       [ymd]: { ...prev[ymd], [field]: value },
@@ -450,7 +501,7 @@ function ScheduleWizard() {
             onAnchorChange={setAnchor}
             suggestions={suggestions}
             onApplySuggestion={applySuggestion}
-            highlightedSuggestionRank={highlightedSuggestionRank}
+            highlightedSuggestionRanks={highlightedSuggestionRanks}
           />
           <button
             type="button"

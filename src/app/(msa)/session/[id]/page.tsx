@@ -34,6 +34,7 @@ type Session = {
   organizerPreferredSlotIds?: string[];
   inviteEmailSentAt?: string;
   scheduleInviteSentAt?: string;
+  participantDeclinedAt?: string;
   inviteEmailSent?: string;
   calendarCreated?: boolean;
   createdEventIds: string[];
@@ -118,7 +119,16 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
   const [busyPickLoading, setBusyPickLoading] = useState(false);
   const [pickStepBusy, setPickStepBusy] = useState<{ start: string; end: string }[]>([]);
-  const [highlightedSuggestionRank, setHighlightedSuggestionRank] = useState<1 | 2 | 3 | null>(null);
+  const [suggestionRankToYmd, setSuggestionRankToYmd] = useState<Partial<Record<1 | 2 | 3, string>>>(
+    {},
+  );
+  /** 日付ごとの時間（複数 DAYREMEMBER で異なる時間帯を選べる） */
+  const [ymdSlotTimes, setYmdSlotTimes] = useState<Record<string, { start: string; end: string }>>({});
+
+  const highlightedSuggestionRanks = useMemo(
+    () => new Set(([1, 2, 3] as const).filter((r) => Boolean(suggestionRankToYmd[r]))),
+    [suggestionRankToYmd],
+  );
 
   useEffect(() => {
     let c = true;
@@ -177,6 +187,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       (s.organizerPreferredSlotIds ?? []).join(","),
       s.inviteEmailSentAt ?? "",
       s.scheduleInviteSentAt ?? "",
+      s.participantDeclinedAt ?? "",
       String(s.calendarCreated ?? ""),
       (s.calendarMeetLinks ?? []).join(","),
       (s.createdEventIds ?? []).join(","),
@@ -254,6 +265,18 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       const next = new Set([...prev].filter((ymd) => !calendarBlockedYmd.has(ymd)));
       return next.size === prev.size && [...next].every((y) => prev.has(y)) ? prev : next;
     });
+    setSuggestionRankToYmd((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const r of [1, 2, 3] as const) {
+        const y = next[r];
+        if (y && calendarBlockedYmd.has(y)) {
+          delete next[r];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
   }, [calendarBlockedYmd]);
 
   const slotById = useMemo(() => {
@@ -262,11 +285,28 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   }, [session]);
 
   function toggleDate(ymd: string) {
-    setHighlightedSuggestionRank(null);
     setPickedDates((prev) => {
       const n = new Set(prev);
-      if (n.has(ymd)) n.delete(ymd);
-      else n.add(ymd);
+      if (n.has(ymd)) {
+        n.delete(ymd);
+        setSuggestionRankToYmd((sr) => {
+          const nx = { ...sr };
+          for (const rank of [1, 2, 3] as const) {
+            if (nx[rank] === ymd) delete nx[rank];
+          }
+          return nx;
+        });
+        setYmdSlotTimes((t) => {
+          const { [ymd]: _, ...rest } = t;
+          return rest;
+        });
+      } else {
+        n.add(ymd);
+        setYmdSlotTimes((t) => ({
+          ...t,
+          [ymd]: { start: timeStart, end: timeEnd },
+        }));
+      }
       return n;
     });
   }
@@ -323,11 +363,22 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   }
 
   function applySuggestionSession(s: DayRememberSuggestion) {
-    if (highlightedSuggestionRank === s.rank) {
-      setHighlightedSuggestionRank(null);
-      setPickedDates(new Set());
-      setTimeStart("19:00");
-      setTimeEnd("20:00");
+    if (suggestionRankToYmd[s.rank]) {
+      const ymd = suggestionRankToYmd[s.rank]!;
+      setSuggestionRankToYmd((prev) => {
+        const next = { ...prev };
+        delete next[s.rank];
+        return next;
+      });
+      setPickedDates((prev) => {
+        const n = new Set(prev);
+        n.delete(ymd);
+        return n;
+      });
+      setYmdSlotTimes((prev) => {
+        const { [ymd]: _, ...rest } = prev;
+        return rest;
+      });
       setError(null);
       return;
     }
@@ -347,14 +398,14 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     const startStr = `${pad(sh)}:${pad(sm)}`;
     const endStr = `${pad(eh)}:${pad(em)}`;
     if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
-      setHighlightedSuggestionRank(s.rank);
       setError(
         "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、手動で調整してください。",
       );
       return;
     }
-    setHighlightedSuggestionRank(s.rank);
-    setPickedDates(new Set([ymd]));
+    setSuggestionRankToYmd((prev) => ({ ...prev, [s.rank]: ymd }));
+    setPickedDates((prev) => new Set(prev).add(ymd));
+    setYmdSlotTimes((prev) => ({ ...prev, [ymd]: { start: startStr, end: endStr } }));
     setTimeStart(startStr);
     setTimeEnd(endStr);
     setError(null);
@@ -384,10 +435,15 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     const bj = (await br.json().catch(() => ({}))) as { busy?: { start: string; end: string }[] };
     const busy = bj.busy ?? [];
     setCalendarBusy(busy);
-    for (const ymd of dates) {
-      if (ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, busy)) {
+    const items = dates.map((ymd) => {
+      const st = ymdSlotTimes[ymd]?.start ?? timeStart;
+      const en = ymdSlotTimes[ymd]?.end ?? timeEnd;
+      return { ymd, timeStart: st, timeEnd: en };
+    });
+    for (const it of items) {
+      if (ymdRangeOverlapsBusy(it.ymd, it.timeStart, it.timeEnd, busy)) {
         setError(
-          `${ymd} の時間帯が Google カレンダーの予定と重なっています。空いている時間に変更してください。`,
+          `${it.ymd} の時間帯が Google カレンダーの予定と重なっています。空いている時間に変更してください。`,
         );
         return;
       }
@@ -395,9 +451,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     setError(null);
     await patch({
       action: "build_slots",
-      dates,
-      timeStart,
-      timeEnd,
+      items,
     });
   }
 
@@ -421,9 +475,11 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const timeOverlapWarning =
     pickedDates.size > 0 &&
     busyHintForTime.length > 0 &&
-    Array.from(pickedDates).some((ymd) =>
-      ymdRangeOverlapsBusy(ymd, timeStart, timeEnd, busyHintForTime),
-    );
+    Array.from(pickedDates).some((ymd) => {
+      const st = ymdSlotTimes[ymd]?.start ?? timeStart;
+      const en = ymdSlotTimes[ymd]?.end ?? timeEnd;
+      return ymdRangeOverlapsBusy(ymd, st, en, busyHintForTime);
+    });
 
   return (
     <div className="flex flex-1 flex-col gap-5 pb-4">
@@ -446,6 +502,23 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             設定を開いて連携する
           </Link>
         </p>
+      )}
+
+      {session.status === "participant_declined" && (
+        <section className="rounded-2xl border border-rose-800/50 bg-rose-950/30 p-4 ring-1 ring-rose-900/40">
+          <h2 className="text-sm font-semibold text-rose-100">Bさんが候補を見送りました</h2>
+          <p className="mt-1 text-xs text-rose-200/90">
+            日程が合わなかったとのことです。新しい候補を作成するには下のボタンを押してください。
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => void patch({ action: "organizer_reset_after_decline" })}
+            className="mt-4 w-full rounded-xl bg-rose-700 py-3 text-sm font-semibold text-white hover:bg-rose-600 disabled:opacity-50"
+          >
+            {pending ? "処理中…" : "候補を作り直す"}
+          </button>
+        </section>
       )}
 
       {needsBuild && (
@@ -485,7 +558,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                   onAnchorChange={setAnchor}
                   suggestions={suggestions}
                   onApplySuggestion={applySuggestionSession}
-                  highlightedSuggestionRank={highlightedSuggestionRank}
+                  highlightedSuggestionRanks={highlightedSuggestionRanks}
                 />
               </div>
             )}
@@ -494,34 +567,71 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           <section className="rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4 ring-1 ring-zinc-800">
             <h2 className="text-sm font-semibold text-zinc-100">2. 時間帯（開始 — 終了）</h2>
             <p className="mt-1 text-xs text-zinc-400">
-              選んだ日に同じ時間帯を適用します（JST）。Google カレンダーに予定がある時間は選べません。
+              日付ごとに時間を指定できます（DAYREMEMBER で複数選ぶと日ごとに別の時間帯にもできます）。Google
+              カレンダーに予定がある時間は選べません。
             </p>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <label className="flex flex-col gap-1 text-xs text-zinc-400">
-                開始
-                <input
-                  type="time"
-                  value={timeStart}
-                  onChange={(e) => {
-                    setHighlightedSuggestionRank(null);
-                    setTimeStart(e.target.value);
-                  }}
-                  className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
-                />
-              </label>
-              <span className="pt-5 text-zinc-500">—</span>
-              <label className="flex flex-col gap-1 text-xs text-zinc-400">
-                終了
-                <input
-                  type="time"
-                  value={timeEnd}
-                  onChange={(e) => {
-                    setHighlightedSuggestionRank(null);
-                    setTimeEnd(e.target.value);
-                  }}
-                  className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
-                />
-              </label>
+            <div className="mt-4 flex flex-col gap-4">
+              {Array.from(pickedDates)
+                .sort()
+                .map((ymd) => (
+                  <div
+                    key={ymd}
+                    className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-3"
+                  >
+                    <span className="mb-0.5 w-full text-xs font-medium text-zinc-500 sm:w-28">{ymd}</span>
+                    <label className="flex flex-col gap-1 text-xs text-zinc-400">
+                      開始
+                      <input
+                        type="time"
+                        value={ymdSlotTimes[ymd]?.start ?? timeStart}
+                        onChange={(e) => {
+                          setSuggestionRankToYmd((prev) => {
+                            const next = { ...prev };
+                            for (const rank of [1, 2, 3] as const) {
+                              if (next[rank] === ymd) delete next[rank];
+                            }
+                            return next;
+                          });
+                          setYmdSlotTimes((prev) => ({
+                            ...prev,
+                            [ymd]: {
+                              start: e.target.value,
+                              end: prev[ymd]?.end ?? timeEnd,
+                            },
+                          }));
+                          if (pickedDates.size <= 1) setTimeStart(e.target.value);
+                        }}
+                        className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
+                      />
+                    </label>
+                    <span className="pb-2 text-zinc-500">—</span>
+                    <label className="flex flex-col gap-1 text-xs text-zinc-400">
+                      終了
+                      <input
+                        type="time"
+                        value={ymdSlotTimes[ymd]?.end ?? timeEnd}
+                        onChange={(e) => {
+                          setSuggestionRankToYmd((prev) => {
+                            const next = { ...prev };
+                            for (const rank of [1, 2, 3] as const) {
+                              if (next[rank] === ymd) delete next[rank];
+                            }
+                            return next;
+                          });
+                          setYmdSlotTimes((prev) => ({
+                            ...prev,
+                            [ymd]: {
+                              start: prev[ymd]?.start ?? timeStart,
+                              end: e.target.value,
+                            },
+                          }));
+                          if (pickedDates.size <= 1) setTimeEnd(e.target.value);
+                        }}
+                        className="rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-base text-zinc-100"
+                      />
+                    </label>
+                  </div>
+                ))}
             </div>
             {timeOverlapWarning && (
                 <p className="mt-2 text-xs text-amber-300">
