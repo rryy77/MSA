@@ -50,13 +50,40 @@ export function getGoogleCalendarRedirectUriForRequest(request: Request): string
 
 const CALLBACK_SUFFIX = "/api/google/calendar/callback";
 
-/** OAuth 完了後の /settings など、ブラウザと同じオリジンへのリダイレクト用 */
-export function getPublicBaseUrlFromRequest(request: Request): string {
-  const cb = getGoogleCalendarRedirectUriForRequest(request).replace(/\/$/, "");
+/** 認可 URL 生成時とコールバックの getToken で同一文字列にするため（リクエストヘッダ差で mismatch になるのを防ぐ） */
+export const GCAL_OAUTH_REDIRECT_COOKIE = "msa_gcal_oauth_ru";
+
+export function isSafeOAuthRedirectUri(value: string): boolean {
+  try {
+    const u = new URL(value);
+    const p = u.pathname.replace(/\/$/, "") || "/";
+    const expected = CALLBACK_SUFFIX.replace(/\/$/, "");
+    if (p !== expected) return false;
+    if (u.protocol === "https:") return true;
+    if (
+      u.protocol === "http:" &&
+      (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** OAuth 完了後の /settings などへのリダイレクト用ベース URL */
+export function getPublicBaseUrlFromRedirectUri(redirectUri: string): string {
+  const cb = redirectUri.replace(/\/$/, "");
   if (cb.endsWith(CALLBACK_SUFFIX)) {
     return cb.slice(0, -CALLBACK_SUFFIX.length);
   }
   return getAppBaseUrl();
+}
+
+/** OAuth 完了後の /settings など、ブラウザと同じオリジンへのリダイレクト用 */
+export function getPublicBaseUrlFromRequest(request: Request): string {
+  return getPublicBaseUrlFromRedirectUri(getGoogleCalendarRedirectUriForRequest(request));
 }
 
 export function getGoogleOAuthClientForRedirect(

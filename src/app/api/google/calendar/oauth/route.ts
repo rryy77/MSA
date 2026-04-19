@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  GCAL_OAUTH_REDIRECT_COOKIE,
   getGoogleCalendarRedirectUriForRequest,
   getGoogleOAuthClientForRedirect,
   isGoogleCalendarOAuthConfigured,
@@ -34,5 +35,14 @@ export async function GET(request: Request) {
     state: auth.ok.cfg.organizerId,
   });
 
-  return NextResponse.redirect(url);
+  /** コールバックは Google からの GET でヘッダが変わることがあるため、getToken に同じ redirect_uri を渡す */
+  const res = NextResponse.redirect(url);
+  res.cookies.set(GCAL_OAUTH_REDIRECT_COOKIE, redirectUri, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 600,
+  });
+  return res;
 }

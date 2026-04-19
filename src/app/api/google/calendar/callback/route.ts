@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
+  GCAL_OAUTH_REDIRECT_COOKIE,
   getGoogleCalendarRedirectUriForRequest,
   getGoogleOAuthClientForRedirect,
-  getPublicBaseUrlFromRequest,
+  getPublicBaseUrlFromRedirectUri,
+  isSafeOAuthRedirectUri,
 } from "@/lib/googleCalendarOAuth";
 import {
   fetchGoogleCalendarRefreshToken,
@@ -12,8 +14,21 @@ import {
 import { getMsaConfig } from "@/lib/msaConfig";
 import { getMsaSessionFromCookies } from "@/lib/msaSession";
 
+function redirectClearingCookie(url: string | URL): NextResponse {
+  const res = NextResponse.redirect(url);
+  res.cookies.set(GCAL_OAUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
+  return res;
+}
+
 export async function GET(request: Request) {
-  const base = getPublicBaseUrlFromRequest(request);
+  const cookieStore = await cookies();
+  const storedRu = cookieStore.get(GCAL_OAUTH_REDIRECT_COOKIE)?.value;
+  const redirectUri =
+    storedRu && isSafeOAuthRedirectUri(storedRu)
+      ? storedRu
+      : getGoogleCalendarRedirectUriForRequest(request);
+
+  const base = getPublicBaseUrlFromRedirectUri(redirectUri);
   const settingsUrl = new URL("/settings", base);
 
   const url = new URL(request.url);
@@ -25,7 +40,7 @@ export async function GET(request: Request) {
     if (desc) {
       settingsUrl.searchParams.set("detail", desc.slice(0, 500));
     }
-    return NextResponse.redirect(settingsUrl);
+    return redirectClearingCookie(settingsUrl);
   }
 
   const code = url.searchParams.get("code");
@@ -33,35 +48,34 @@ export async function GET(request: Request) {
   if (!code || !state) {
     settingsUrl.searchParams.set("calendar", "error");
     settingsUrl.searchParams.set("reason", "missing_code");
-    return NextResponse.redirect(settingsUrl);
+    return redirectClearingCookie(settingsUrl);
   }
 
   let cfg;
   try {
     cfg = getMsaConfig();
   } catch {
-    return NextResponse.redirect(new URL("/login", base));
+    return redirectClearingCookie(new URL("/login", base));
   }
 
   if (state !== cfg.organizerId) {
     settingsUrl.searchParams.set("calendar", "error");
     settingsUrl.searchParams.set("reason", "state_mismatch");
-    return NextResponse.redirect(settingsUrl);
+    return redirectClearingCookie(settingsUrl);
   }
 
-  const msa = getMsaSessionFromCookies(await cookies());
+  const msa = getMsaSessionFromCookies(cookieStore);
   if (!msa || msa.role !== "organizer" || msa.uid !== cfg.organizerId) {
-    return NextResponse.redirect(
+    return redirectClearingCookie(
       new URL(`/login?next=${encodeURIComponent("/settings")}`, base),
     );
   }
 
-  const redirectUri = getGoogleCalendarRedirectUriForRequest(request);
   const oauth2 = getGoogleOAuthClientForRedirect(redirectUri);
   if (!oauth2) {
     settingsUrl.searchParams.set("calendar", "error");
     settingsUrl.searchParams.set("reason", "oauth_not_configured");
-    return NextResponse.redirect(settingsUrl);
+    return redirectClearingCookie(settingsUrl);
   }
 
   try {
@@ -70,7 +84,7 @@ export async function GET(request: Request) {
     const refresh = tokens.refresh_token ?? existing ?? null;
     if (!refresh) {
       settingsUrl.searchParams.set("calendar", "no_refresh");
-      return NextResponse.redirect(settingsUrl);
+      return redirectClearingCookie(settingsUrl);
     }
     await updateGoogleCalendarRefreshToken(msa.uid, refresh);
   } catch (e) {
@@ -80,9 +94,9 @@ export async function GET(request: Request) {
       "reason",
       e instanceof Error ? e.message.slice(0, 80) : "token_exchange",
     );
-    return NextResponse.redirect(settingsUrl);
+    return redirectClearingCookie(settingsUrl);
   }
 
   settingsUrl.searchParams.set("calendar", "connected");
-  return NextResponse.redirect(settingsUrl);
+  return redirectClearingCookie(settingsUrl);
 }
