@@ -28,6 +28,45 @@ type PatchBody =
 
 const HM = /^\d{1,2}:\d{2}$/;
 
+function formatSlotLabelsForNotify(session: Session, slotIds: string[]): string {
+  const lines = slotIds
+    .map((id) => session.slots.find((s) => s.id === id)?.label)
+    .filter((x): x is string => Boolean(x));
+  if (lines.length === 0) return "（候補なし）";
+  return lines.map((l) => `・${l}`).join("\n");
+}
+
+/** B 確定後、主催者（A）向け：日程一覧 + Google カレンダー成否 + Meet リンク */
+function buildOrganizerFinalizeLineMessage(sessionP: Session): string {
+  const base = getAppBaseUrl();
+  const sessionUrl = `${base}/session/${sessionP.id}`;
+  const ids = sessionP.organizerFinalIds ?? [];
+  const scheduleBlock = formatSlotLabelsForNotify(sessionP, ids);
+
+  const calOk = sessionP.calendarCreated === true;
+  const calLine = calOk
+    ? "✅ Google カレンダーに予定を追加しました。"
+    : "⚠️ Google カレンダーへの自動追加はできませんでした（設定でカレンダー連携を確認してください）。";
+
+  const links = (sessionP.calendarMeetLinks ?? []).filter(Boolean);
+  const meetLine =
+    calOk && links.length > 0 ? `\nMeet: ${links[0]}` : "";
+
+  return [
+    "MSA（日程調整）",
+    "参加者（B）が候補を確定しました。",
+    "",
+    `開始日（トリガー）: ${sessionP.triggerDateJst}`,
+    "",
+    "【確定した日程】",
+    scheduleBlock,
+    "",
+    calLine + meetLine,
+    "",
+    `詳細: ${sessionUrl}`,
+  ].join("\n");
+}
+
 /** B が確定したあと、A にアプリ内通知・プッシュ・LINE のみ（メールは送らない） */
 async function notifyOrganizerSessionFinalized(
   sessionP: Session,
@@ -35,25 +74,30 @@ async function notifyOrganizerSessionFinalized(
 ) {
   const basePush = getAppBaseUrl();
   const sessionUrl = `${basePush}/session/${sessionP.id}`;
+  const lineText = buildOrganizerFinalizeLineMessage(sessionP);
+
   if (sessionP.organizerUserId) {
     fireAndForgetPush(sessionP.organizerUserId, {
-      title: "MSA: 日程が確定しました",
-      body: "参加者が候補を確定しました",
+      title: "MSA: B が日程を確定しました",
+      body: sessionP.calendarCreated
+        ? "Google カレンダーに反映しました。タップで詳細。"
+        : "日程が確定しました。カレンダー未反映の可能性があります。",
       url: sessionUrl,
     });
-    fireAndForgetLineMessagingForUser(
-      sessionP.organizerUserId,
-      `MSA\n参加者が日程を確定しました。\n${sessionUrl}`,
-    );
+    fireAndForgetLineMessagingForUser(sessionP.organizerUserId, lineText);
   }
   try {
+    const safeHtml = lineText
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
     await insertInviteNotification({
       sessionId: sessionP.id,
       recipientUserId: cfg.organizerId,
       organizerUserId: cfg.participantId,
       subject: "MSA: 参加者が日程を確定しました",
-      textBody: `参加者が日程を確定しました。\n\n開く: ${sessionUrl}`,
-      htmlBody: `<p>参加者が日程を確定しました。</p><p><a href="${sessionUrl}">セッションを開く</a></p>`,
+      textBody: lineText,
+      htmlBody: `<pre style="white-space:pre-wrap;font-family:inherit">${safeHtml}</pre><p><a href="${sessionUrl}">セッションを開く</a></p>`,
       inviteUrl: sessionUrl,
     });
   } catch (e) {
@@ -368,7 +412,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     fireAndForgetLineMessagingForUser(
       participantUserId,
-      `MSA\n日程調整の案内を送信しました（アプリ内通知）。\n${respondUrl}`,
+      [
+        "MSA（日程調整）",
+        "主催者（A）から日程の候補が届きました。",
+        `開始日（トリガー）: ${session.triggerDateJst}`,
+        "下のリンクから候補を選び、「確定」してください。",
+        "",
+        respondUrl,
+      ].join("\n"),
     );
 
     {
@@ -438,7 +489,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     fireAndForgetLineMessagingForUser(
       participantUserId,
-      `MSA\n日程調整の案内を送信しました（アプリ内通知）。\n${inviteUrl}`,
+      [
+        "MSA（日程調整）",
+        "主催者（A）から日程の候補が届きました。",
+        `開始日（トリガー）: ${session.triggerDateJst}`,
+        "",
+        inviteUrl,
+      ].join("\n"),
     );
 
     {
