@@ -1,7 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getAppBaseUrl } from "@/lib/appUrl";
-import { getGoogleOAuthClientOrNull } from "@/lib/googleCalendarOAuth";
+import {
+  getGoogleCalendarRedirectUriForRequest,
+  getGoogleOAuthClientForRedirect,
+  getPublicBaseUrlFromRequest,
+} from "@/lib/googleCalendarOAuth";
 import {
   fetchGoogleCalendarRefreshToken,
   updateGoogleCalendarRefreshToken,
@@ -10,7 +13,7 @@ import { getMsaConfig } from "@/lib/msaConfig";
 import { getMsaSessionFromCookies } from "@/lib/msaSession";
 
 export async function GET(request: Request) {
-  const base = getAppBaseUrl();
+  const base = getPublicBaseUrlFromRequest(request);
   const settingsUrl = new URL("/settings", base);
 
   const url = new URL(request.url);
@@ -53,7 +56,8 @@ export async function GET(request: Request) {
     );
   }
 
-  const oauth2 = getGoogleOAuthClientOrNull();
+  const redirectUri = getGoogleCalendarRedirectUriForRequest(request);
+  const oauth2 = getGoogleOAuthClientForRedirect(redirectUri);
   if (!oauth2) {
     settingsUrl.searchParams.set("calendar", "error");
     settingsUrl.searchParams.set("reason", "oauth_not_configured");

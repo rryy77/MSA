@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
-import { getGoogleOAuthClientOrNull, isGoogleCalendarOAuthConfigured } from "@/lib/googleCalendarOAuth";
+import {
+  getGoogleCalendarRedirectUriForRequest,
+  getGoogleOAuthClientForRedirect,
+  isGoogleCalendarOAuthConfigured,
+} from "@/lib/googleCalendarOAuth";
 import { requireMsaOrganizer } from "@/lib/msaApiAuth";
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!isGoogleCalendarOAuthConfigured()) {
     return NextResponse.json({ error: "google_oauth_not_configured" }, { status: 503 });
   }
@@ -10,7 +14,8 @@ export async function GET() {
   const auth = await requireMsaOrganizer();
   if ("error" in auth) return auth.error;
 
-  const oauth2 = getGoogleOAuthClientOrNull();
+  const redirectUri = getGoogleCalendarRedirectUriForRequest(request);
+  const oauth2 = getGoogleOAuthClientForRedirect(redirectUri);
   if (!oauth2) {
     return NextResponse.json({ error: "google_oauth_not_configured" }, { status: 503 });
   }
