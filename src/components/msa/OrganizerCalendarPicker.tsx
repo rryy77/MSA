@@ -141,7 +141,7 @@ export function OrganizerCalendarPicker({
                 onAnchorChange(anchor.minus({ months: 1 }));
               }
             }}
-            className="rounded-lg border border-zinc-600 px-2 py-1 text-sm text-zinc-300 hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
             aria-label="前へ"
           >
             ‹
@@ -160,7 +160,7 @@ export function OrganizerCalendarPicker({
                 onAnchorChange(anchor.plus({ months: 1 }));
               }
             }}
-            className="rounded-lg border border-zinc-600 px-2 py-1 text-sm text-zinc-300 hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
             aria-label="次へ"
           >
             ›
@@ -189,7 +189,7 @@ export function OrganizerCalendarPicker({
                 title={title}
                 onClick={() => canSelect && onToggleYmd(ymd)}
                 className={
-                  "flex min-h-[4.75rem] flex-col items-center justify-center rounded-xl border px-1 py-2.5 text-center text-[11px] font-semibold sm:min-h-[5rem] sm:text-xs " +
+                  "flex min-h-[5.6rem] flex-col items-center justify-center rounded-xl border px-1 py-3 text-center text-[12px] font-semibold sm:min-h-[5.2rem] sm:text-xs " +
                   (!inEligible
                     ? "cursor-not-allowed border-zinc-800 bg-zinc-950/50 text-zinc-600"
                     : isBlocked

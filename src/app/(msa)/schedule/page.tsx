@@ -3,7 +3,7 @@
 import { DateTime } from "luxon";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   OrganizerCalendarPicker,
   type CalendarViewMode,
@@ -34,9 +34,7 @@ function confirmOverlapProceed(ymd: string, startHm: string, endHm: string): boo
   );
 }
 
-type Step = "menu" | "pickDates" | "times" | "review" | "confirm";
-
-type Summary = { id: string; status: string; triggerDateJst: string; triggerAt: string };
+type Step = "menu" | "pickDates" | "times" | "review";
 
 function ScheduleWizard() {
   const [buildMode, setBuildMode] = useState<"set" | "select">("select");
@@ -72,9 +70,6 @@ function ScheduleWizard() {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<Summary[]>([]);
-  const [loadingList, setLoadingList] = useState(false);
-  const searchParams = useSearchParams();
   const [actorRole, setActorRole] = useState<"organizer" | "participant" | null>(null);
 
   useEffect(() => {
@@ -85,12 +80,6 @@ function ScheduleWizard() {
       })
       .catch(() => setActorRole(null));
   }, []);
-
-  useEffect(() => {
-    if (searchParams.get("view") === "confirm") {
-      setStep("confirm");
-    }
-  }, [searchParams]);
 
   useEffect(() => {
     setEligibleDates(getSelectableDatesJstYear(new Date()));
@@ -105,26 +94,6 @@ function ScheduleWizard() {
   useEffect(() => {
     void refreshGoogleStatus();
   }, [refreshGoogleStatus]);
-
-  const loadSessions = useCallback(async () => {
-    setLoadingList(true);
-    try {
-      const res = await fetch("/api/sessions", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const data = await res.json();
-      setSessions(data.sessions ?? []);
-    } catch {
-      setSessions([]);
-    } finally {
-      setLoadingList(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (step === "confirm") loadSessions();
-  }, [step, loadSessions]);
 
   useEffect(() => {
     if (step !== "pickDates" || !eligibleDates.length) return;
@@ -480,7 +449,7 @@ function ScheduleWizard() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 pb-6">
+    <div className="flex flex-1 flex-col gap-5 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
       <Link href="/" className="text-sm text-sky-400 hover:underline">
         ← メッセージに戻る
       </Link>
@@ -504,50 +473,18 @@ function ScheduleWizard() {
             <button
               type="button"
               onClick={() => void startPickDates("set")}
-              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-4 text-base font-semibold text-zinc-100 ring-1 ring-zinc-700 transition hover:bg-zinc-700"
+              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-5 text-lg font-semibold text-zinc-100 ring-1 ring-zinc-700 transition active:scale-[0.99] hover:bg-zinc-700"
             >
               まとめて予約（セット）
             </button>
             <button
               type="button"
               onClick={() => void startPickDates("select")}
-              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-4 text-base font-semibold text-zinc-100 ring-1 ring-zinc-700 transition hover:bg-zinc-700"
+              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-5 text-lg font-semibold text-zinc-100 ring-1 ring-zinc-700 transition active:scale-[0.99] hover:bg-zinc-700"
             >
               ひとつずつ選択
             </button>
           </div>
-        </div>
-      )}
-
-      {step === "confirm" && (
-        <div className="flex flex-col gap-4">
-          <header className="flex items-center justify-between gap-2">
-            <h1 className="text-lg font-bold text-zinc-100">予定確認</h1>
-            <button type="button" onClick={() => setStep("menu")} className="text-sm text-sky-400">
-              戻る
-            </button>
-          </header>
-          {loadingList ? (
-            <p className="text-sm text-zinc-500">読み込み中…</p>
-          ) : sessions.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-500">
-              まだ予定がありません
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {sessions.map((s) => (
-                <li key={s.id}>
-                  <Link
-                    href={`/session/${s.id}`}
-                    className="block rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-zinc-200 hover:border-sky-600"
-                  >
-                    <span className="font-medium">開始日 {s.triggerDateJst}</span>
-                    <span className="mt-1 block text-xs text-zinc-500">{s.status}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
       )}
 
@@ -583,7 +520,7 @@ function ScheduleWizard() {
                       type="button"
                       onClick={() => applySetSuggestion(s)}
                       className={
-                        "rounded-xl border px-3 py-2 text-left text-sm " +
+                        "rounded-xl border px-4 py-3 text-left text-base " +
                         (setSuggestionIdToYmd[s.id]
                           ? "border-amber-400 bg-amber-950/50 text-zinc-50"
                           : "border-zinc-600 bg-zinc-950 text-zinc-200")
@@ -603,7 +540,7 @@ function ScheduleWizard() {
                           type="button"
                           onClick={() => applySetSuggestion(s)}
                           className={
-                            "rounded-lg border px-3 py-2 text-sm " +
+                            "rounded-lg border px-4 py-3 text-base " +
                             (setSuggestionIdToYmd[s.id]
                               ? "border-amber-400 bg-amber-950/50 text-zinc-50"
                               : "border-zinc-600 bg-zinc-900 text-zinc-200")
@@ -630,7 +567,7 @@ function ScheduleWizard() {
                         type="button"
                         onClick={() => applySetSuggestion(s)}
                         className={
-                          "rounded-lg border px-3 py-2 text-sm " +
+                          "rounded-lg border px-4 py-3 text-base " +
                           (setSuggestionIdToYmd[s.id]
                             ? "border-amber-400 bg-amber-950/50 text-zinc-50"
                             : "border-zinc-600 bg-zinc-900 text-zinc-200")
@@ -658,13 +595,15 @@ function ScheduleWizard() {
               highlightedSuggestionRanks={highlightedSuggestionRanks}
             />
           )}
-          <button
-            type="button"
-            onClick={() => void goTimes()}
-            className="mt-2 w-full rounded-xl bg-zinc-800 py-3.5 text-base font-semibold text-zinc-100 ring-1 ring-zinc-600 hover:bg-zinc-700"
-          >
-            {buildMode === "set" ? "次へ（内容確認）" : "次へ（時間を選ぶ）"}
-          </button>
+          <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-20 mt-2">
+            <button
+              type="button"
+              onClick={() => void goTimes()}
+              className="w-full rounded-xl bg-zinc-100 py-4 text-lg font-bold text-zinc-900 shadow-xl shadow-zinc-950/30 ring-1 ring-zinc-200 active:scale-[0.99]"
+            >
+              {buildMode === "set" ? "次へ（内容確認）" : "次へ（時間を選ぶ）"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -697,7 +636,7 @@ function ScheduleWizard() {
                           key={`tm-${ymd}-${s.id}`}
                           type="button"
                           onClick={() => applyTimeSuggestionToDate(ymd, s)}
-                          className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:border-teal-500"
+                          className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 hover:border-teal-500"
                         >
                           第{s.rank}候補{s.rank === 1 ? `-${s.slotInRank}` : ""} {s.label}
                         </button>
@@ -737,13 +676,15 @@ function ScheduleWizard() {
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={goReview}
-            className="w-full rounded-xl bg-zinc-800 py-3.5 text-base font-semibold text-zinc-100 ring-1 ring-zinc-600 hover:bg-zinc-700"
-          >
-            次へ
-          </button>
+          <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-20">
+            <button
+              type="button"
+              onClick={goReview}
+              className="w-full rounded-xl bg-zinc-100 py-4 text-lg font-bold text-zinc-900 shadow-xl shadow-zinc-950/30 ring-1 ring-zinc-200 active:scale-[0.99]"
+            >
+              次へ
+            </button>
+          </div>
         </div>
       )}
 
@@ -773,14 +714,16 @@ function ScheduleWizard() {
           <p className="text-xs text-zinc-500">
             次の画面（セッション）で、参加者のメールアドレスを入力して日程候補を送ります。
           </p>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void submitWizard()}
-            className="w-full rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/40 hover:bg-blue-500 disabled:opacity-50"
-          >
-            {pending ? "保存中…" : "候補を保存して次へ"}
-          </button>
+          <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-20">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => void submitWizard()}
+              className="w-full rounded-xl bg-blue-600 py-4 text-lg font-bold text-white shadow-lg shadow-blue-900/40 active:scale-[0.99] hover:bg-blue-500 disabled:opacity-50"
+            >
+              {pending ? "保存中…" : "候補を保存して次へ"}
+            </button>
+          </div>
         </div>
       )}
     </div>
