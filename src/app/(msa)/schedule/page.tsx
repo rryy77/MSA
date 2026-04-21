@@ -335,6 +335,18 @@ function ScheduleWizard() {
     }
     setError(null);
     const dates = Array.from(selectedYmd).sort();
+    if (buildMode === "set") {
+      setConcreteDates(dates);
+      setTimes((prev) => {
+        const next = { ...prev };
+        for (const ymd of dates) {
+          if (!next[ymd]) next[ymd] = { start: "19:00", end: "20:00" };
+        }
+        return next;
+      });
+      setStep("review");
+      return;
+    }
     setConcreteDates(dates);
     setTimes((prev) => {
       const next = { ...prev };
@@ -643,12 +655,12 @@ function ScheduleWizard() {
             onClick={() => void goTimes()}
             className="mt-2 w-full rounded-xl bg-zinc-800 py-3.5 text-base font-semibold text-zinc-100 ring-1 ring-zinc-600 hover:bg-zinc-700"
           >
-            次へ（時間を選ぶ）
+            {buildMode === "set" ? "次へ（内容確認）" : "次へ（時間を選ぶ）"}
           </button>
         </div>
       )}
 
-      {step === "times" && (
+      {step === "times" && buildMode === "select" && (
         <div className="flex flex-col gap-4">
           <header className="flex items-center justify-between">
             <h1 className="text-lg font-bold text-zinc-100">時間を選ぶ</h1>
@@ -731,7 +743,11 @@ function ScheduleWizard() {
         <div className="flex flex-col gap-4">
           <header className="flex items-center justify-between">
             <h1 className="text-lg font-bold text-zinc-100">内容の確認</h1>
-            <button type="button" onClick={() => setStep("times")} className="text-sm text-zinc-400">
+            <button
+              type="button"
+              onClick={() => setStep(buildMode === "set" ? "pickDates" : "times")}
+              className="text-sm text-zinc-400"
+            >
               戻る
             </button>
           </header>
