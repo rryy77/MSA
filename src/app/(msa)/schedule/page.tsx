@@ -13,6 +13,7 @@ import { filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
 import {
   firstYmdMatchingWeekdaySkippingBlocked,
   type DayRememberSuggestion,
+  type SetReservationSuggestion,
   type TimeRememberSuggestion,
 } from "@/lib/dayRemember";
 import { getSelectableDatesJstYear } from "@/lib/dateRange";
@@ -38,6 +39,7 @@ type Step = "menu" | "pickDates" | "times" | "review" | "confirm";
 type Summary = { id: string; status: string; triggerDateJst: string; triggerAt: string };
 
 function ScheduleWizard() {
+  const [buildMode, setBuildMode] = useState<"set" | "select">("select");
   const [step, setStep] = useState<Step>("menu");
   const [eligibleDates, setEligibleDates] = useState<string[]>([]);
   const eligibleSet = useMemo(() => new Set(eligibleDates), [eligibleDates]);
@@ -49,6 +51,7 @@ function ScheduleWizard() {
   const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
   const [timeSuggestions, setTimeSuggestions] = useState<TimeRememberSuggestion[]>([]);
+  const [setReservationSuggestions, setSetSuggestions] = useState<SetReservationSuggestion[]>([]);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   /** 30分以上の空きが無い日（Google 予定で埋まっている） */
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
@@ -59,6 +62,7 @@ function ScheduleWizard() {
   const [suggestionRankToYmd, setSuggestionRankToYmd] = useState<Partial<Record<1 | 2 | 3, string>>>(
     {},
   );
+  const [setSuggestionIdToYmd, setSetSuggestionIdToYmd] = useState<Record<string, string>>({});
 
   const highlightedSuggestionRanks = useMemo(
     () => new Set(([1, 2, 3] as const).filter((r) => Boolean(suggestionRankToYmd[r]))),
@@ -135,9 +139,11 @@ function ScheduleWizard() {
       const j = (await r.json().catch(() => ({}))) as {
         suggestions?: DayRememberSuggestion[];
         timeSuggestions?: TimeRememberSuggestion[];
+        setSuggestions?: SetReservationSuggestion[];
       };
       setSuggestions(j.suggestions ?? []);
       setTimeSuggestions(j.timeSuggestions ?? []);
+      setSetSuggestions(j.setSuggestions ?? []);
     })();
   }, [step, eligibleDates]);
 
@@ -207,6 +213,13 @@ function ScheduleWizard() {
           const { [ymd]: _, ...rest } = t;
           return rest;
         });
+        setSetSuggestionIdToYmd((prev) => {
+          const next = { ...prev };
+          for (const k of Object.keys(next)) {
+            if (next[k] === ymd) delete next[k];
+          }
+          return next;
+        });
       } else {
         n.add(ymd);
       }
@@ -214,7 +227,7 @@ function ScheduleWizard() {
     });
   }
 
-  async function startPickDates() {
+  async function startPickDates(mode: "set" | "select") {
     setError(null);
     await refreshGoogleStatus();
     const r = await fetch("/api/google/calendar/status", { credentials: "include", cache: "no-store" });
@@ -226,8 +239,10 @@ function ScheduleWizard() {
       return;
     }
     setGoogleConnected(true);
+    setBuildMode(mode);
     setSelectedYmd(new Set());
     setSuggestionRankToYmd({});
+    setSetSuggestionIdToYmd({});
     setStep("pickDates");
   }
 
@@ -276,6 +291,40 @@ function ScheduleWizard() {
       ...prev,
       [ymd]: { start: startStr, end: endStr },
     }));
+    setError(null);
+  }
+
+  function applySetSuggestion(s: SetReservationSuggestion) {
+    const current = setSuggestionIdToYmd[s.id];
+    if (current) {
+      setSetSuggestionIdToYmd((prev) => {
+        const next = { ...prev };
+        delete next[s.id];
+        return next;
+      });
+      setSelectedYmd((prev) => {
+        const n = new Set(prev);
+        n.delete(current);
+        return n;
+      });
+      setTimes((prev) => {
+        const { [current]: _, ...rest } = prev;
+        return rest;
+      });
+      return;
+    }
+    const sorted = [...eligibleDates].sort();
+    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
+    if (!ymd) {
+      setError("この曜日で選べる空き日がありません。");
+      return;
+    }
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const st = `${pad(Math.floor(s.startMin / 60))}:${pad(s.startMin % 60)}`;
+    const en = `${pad(Math.floor(s.endMin / 60))}:${pad(s.endMin % 60)}`;
+    setSetSuggestionIdToYmd((prev) => ({ ...prev, [s.id]: ymd }));
+    setSelectedYmd((prev) => new Set(prev).add(ymd));
+    setTimes((prev) => ({ ...prev, [ymd]: { start: st, end: en } }));
     setError(null);
   }
 
@@ -442,17 +491,17 @@ function ScheduleWizard() {
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={() => void startPickDates()}
+              onClick={() => void startPickDates("set")}
               className="flex-1 rounded-2xl bg-zinc-800 px-4 py-4 text-base font-semibold text-zinc-100 ring-1 ring-zinc-700 transition hover:bg-zinc-700"
             >
-              予定作成
+              まとめて予約（セット）
             </button>
             <button
               type="button"
-              onClick={() => setStep("confirm")}
+              onClick={() => void startPickDates("select")}
               className="flex-1 rounded-2xl bg-zinc-800 px-4 py-4 text-base font-semibold text-zinc-100 ring-1 ring-zinc-700 transition hover:bg-zinc-700"
             >
-              予定確認
+              ひとつずつ選択
             </button>
           </div>
         </div>
@@ -493,7 +542,9 @@ function ScheduleWizard() {
       {step === "pickDates" && (
         <div className="flex flex-col gap-4">
           <header className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-zinc-100">日付を選ぶ</h1>
+            <h1 className="text-lg font-bold text-zinc-100">
+              {buildMode === "set" ? "セット予約を選ぶ" : "日付を選ぶ"}
+            </h1>
             <button type="button" onClick={() => setStep("menu")} className="text-sm text-zinc-400">
               戻る
             </button>
@@ -508,6 +559,72 @@ function ScheduleWizard() {
             <p className="text-xs text-zinc-500">Google カレンダーの空き状況を取得しています…</p>
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
+          {buildMode === "set" && (
+            <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 ring-1 ring-zinc-800">
+              <h2 className="text-sm font-semibold text-zinc-100">固定セット</h2>
+              <div className="mt-3 flex flex-col gap-2">
+                {setReservationSuggestions
+                  .filter((s) => !s.fromHistory && s.group !== "fixed_saturday")
+                  .map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => applySetSuggestion(s)}
+                      className={
+                        "rounded-xl border px-3 py-2 text-left text-sm " +
+                        (setSuggestionIdToYmd[s.id]
+                          ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                          : "border-zinc-600 bg-zinc-950 text-zinc-200")
+                      }
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                <div className="rounded-xl border border-zinc-700 bg-zinc-950/60 p-2">
+                  <p className="mb-2 text-xs text-zinc-500">土曜日（2つ選択可）</p>
+                  <div className="flex flex-wrap gap-2">
+                    {setReservationSuggestions
+                      .filter((s) => s.group === "fixed_saturday")
+                      .map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => applySetSuggestion(s)}
+                          className={
+                            "rounded-lg border px-3 py-2 text-sm " +
+                            (setSuggestionIdToYmd[s.id]
+                              ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                              : "border-zinc-600 bg-zinc-900 text-zinc-200")
+                          }
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              </div>
+              <h2 className="mt-4 text-sm font-semibold text-zinc-100">最近のおすすめセット</h2>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {setReservationSuggestions
+                  .filter((s) => s.fromHistory)
+                  .map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => applySetSuggestion(s)}
+                      className={
+                        "rounded-lg border px-3 py-2 text-sm " +
+                        (setSuggestionIdToYmd[s.id]
+                          ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                          : "border-zinc-600 bg-zinc-900 text-zinc-200")
+                      }
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+              </div>
+            </section>
+          )}
           <OrganizerCalendarPicker
             eligibleYmd={eligibleSet}
             calendarBlockedYmd={calendarBlockedYmd}
@@ -517,8 +634,8 @@ function ScheduleWizard() {
             onViewModeChange={setViewMode}
             anchor={anchor}
             onAnchorChange={setAnchor}
-            suggestions={suggestions}
-            onApplySuggestion={applySuggestion}
+            suggestions={buildMode === "select" ? suggestions : []}
+            onApplySuggestion={buildMode === "select" ? applySuggestion : undefined}
             highlightedSuggestionRanks={highlightedSuggestionRanks}
           />
           <button

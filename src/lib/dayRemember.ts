@@ -20,7 +20,18 @@ type RecentTimeWindow = {
   at: string;
 };
 
-type DayRememberJson = { entries: DayRememberEntry[]; recentTimeWindows: RecentTimeWindow[] };
+type RecentDayTimeSet = {
+  dow: number;
+  startMin: number;
+  endMin: number;
+  at: string;
+};
+
+type DayRememberJson = {
+  entries: DayRememberEntry[];
+  recentTimeWindows: RecentTimeWindow[];
+  recentDayTimeSets: RecentDayTimeSet[];
+};
 
 const DEFAULT_SHAPE: Omit<DayRememberEntry, "count">[] = [
   { dow: 6, startMin: 10 * 60, endMin: 12 * 60 },
@@ -29,7 +40,7 @@ const DEFAULT_SHAPE: Omit<DayRememberEntry, "count">[] = [
 ];
 
 function emptyJson(): DayRememberJson {
-  return { entries: [], recentTimeWindows: [] };
+  return { entries: [], recentTimeWindows: [], recentDayTimeSets: [] };
 }
 
 function entryKey(e: Pick<DayRememberEntry, "dow" | "startMin" | "endMin">): string {
@@ -84,7 +95,22 @@ function normalizeJson(raw: unknown): DayRememberJson {
       }
     }
   }
-  return { entries: out, recentTimeWindows };
+  const recentSetRaw = (raw as { recentDayTimeSets?: unknown }).recentDayTimeSets;
+  const recentDayTimeSets: RecentDayTimeSet[] = [];
+  if (Array.isArray(recentSetRaw)) {
+    for (const row of recentSetRaw) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const dow = Number(r.dow);
+      const startMin = Number(r.startMin);
+      const endMin = Number(r.endMin);
+      const at = typeof r.at === "string" ? r.at : "";
+      if (dow >= 1 && dow <= 7 && startMin >= 0 && endMin > startMin && endMin <= 24 * 60 && at) {
+        recentDayTimeSets.push({ dow, startMin, endMin, at });
+      }
+    }
+  }
+  return { entries: out, recentTimeWindows, recentDayTimeSets };
 }
 
 /** Google カレンダーに反映した確定枠から DAYREMEMBER を更新 */
@@ -124,6 +150,7 @@ export async function recordDayRememberSlots(userId: string, slots: Slot[]): Pro
   }
 
   const recent = [...j.recentTimeWindows];
+  const recentSets = [...j.recentDayTimeSets];
   for (const slot of slots) {
     const p = slotToEntry(slot);
     if (!p) continue;
@@ -132,8 +159,13 @@ export async function recordDayRememberSlots(userId: string, slots: Slot[]): Pro
     const next = recent.filter((x) => `${x.startMin}-${x.endMin}` !== k);
     next.unshift({ startMin: p.startMin, endMin: p.endMin, at: nowIso });
     recent.splice(0, recent.length, ...next.slice(0, 20));
+
+    const setKey = `${p.dow}-${p.startMin}-${p.endMin}`;
+    const nextSet = recentSets.filter((x) => `${x.dow}-${x.startMin}-${x.endMin}` !== setKey);
+    nextSet.unshift({ dow: p.dow, startMin: p.startMin, endMin: p.endMin, at: nowIso });
+    recentSets.splice(0, recentSets.length, ...nextSet.slice(0, 40));
   }
-  j = { entries: Array.from(map.values()), recentTimeWindows: recent };
+  j = { entries: Array.from(map.values()), recentTimeWindows: recent, recentDayTimeSets: recentSets };
 
   const { error: upErr } = await service.from("profiles").update({ day_remember: j }).eq("id", userId);
   if (upErr) {
@@ -172,6 +204,16 @@ export type TimeRememberSuggestion = {
   startMin: number;
   endMin: number;
   fromHistory: boolean;
+};
+
+export type SetReservationSuggestion = {
+  id: string;
+  label: string;
+  dow: number;
+  startMin: number;
+  endMin: number;
+  fromHistory: boolean;
+  group?: "fixed_saturday" | "fixed";
 };
 
 /** 第1〜第3候補（履歴が足りないときは既定の曜日・時間帯で埋める） */
@@ -286,6 +328,50 @@ export function buildTimeRememberSuggestions(
   push(3, 1, rank3.startMin, rank3.endMin, Boolean(recentUnique[1] ?? fallbackByCount[1]));
 
   return out;
+}
+
+export function buildSetReservationSuggestions(
+  entries: DayRememberEntry[],
+  recentDayTimeSets: { dow: number; startMin: number; endMin: number }[],
+): SetReservationSuggestion[] {
+  const fixed: SetReservationSuggestion[] = [
+    { id: "fixed_wed_20_22", label: "水曜 20:00〜22:00", dow: 3, startMin: 20 * 60, endMin: 22 * 60, fromHistory: false, group: "fixed" },
+    { id: "fixed_sat_09_12", label: "土曜 9:00〜12:00", dow: 6, startMin: 9 * 60, endMin: 12 * 60, fromHistory: false, group: "fixed_saturday" },
+    { id: "fixed_sat_10_12", label: "土曜 10:00〜12:00", dow: 6, startMin: 10 * 60, endMin: 12 * 60, fromHistory: false, group: "fixed_saturday" },
+  ];
+  const used = new Set(fixed.map((f) => `${f.dow}-${f.startMin}-${f.endMin}`));
+  const recentOut: SetReservationSuggestion[] = [];
+  for (const r of recentDayTimeSets) {
+    const k = `${r.dow}-${r.startMin}-${r.endMin}`;
+    if (used.has(k)) continue;
+    used.add(k);
+    recentOut.push({
+      id: `recent_${r.dow}_${r.startMin}_${r.endMin}_${recentOut.length}`,
+      label: `${WD_JA[r.dow - 1] ?? "?"}曜 ${hmLabel(r.startMin, r.endMin)}`,
+      dow: r.dow,
+      startMin: r.startMin,
+      endMin: r.endMin,
+      fromHistory: true,
+    });
+    if (recentOut.length >= 8) break;
+  }
+  if (recentOut.length === 0) {
+    for (const e of [...entries].sort((a, b) => b.count - a.count)) {
+      const k = `${e.dow}-${e.startMin}-${e.endMin}`;
+      if (used.has(k)) continue;
+      used.add(k);
+      recentOut.push({
+        id: `fallback_${e.dow}_${e.startMin}_${e.endMin}_${recentOut.length}`,
+        label: `${WD_JA[e.dow - 1] ?? "?"}曜 ${hmLabel(e.startMin, e.endMin)}`,
+        dow: e.dow,
+        startMin: e.startMin,
+        endMin: e.endMin,
+        fromHistory: true,
+      });
+      if (recentOut.length >= 8) break;
+    }
+  }
+  return [...fixed, ...recentOut];
 }
 
 function mondayOfWeekContainingYmd(ymd: string): DateTime {
@@ -418,15 +504,15 @@ export async function fetchDayRememberEntries(userId: string): Promise<DayRememb
 
 export async function fetchDayRememberData(
   userId: string,
-): Promise<{ entries: DayRememberEntry[]; recentTimeWindows: RecentTimeWindow[] }> {
+): Promise<{ entries: DayRememberEntry[]; recentTimeWindows: RecentTimeWindow[]; recentDayTimeSets: RecentDayTimeSet[] }> {
   const service = createServiceRoleClient();
-  if (!service) return { entries: [], recentTimeWindows: [] };
+  if (!service) return { entries: [], recentTimeWindows: [], recentDayTimeSets: [] };
   const { data, error } = await service
     .from("profiles")
     .select("day_remember")
     .eq("id", userId)
     .maybeSingle();
-  if (error) return { entries: [], recentTimeWindows: [] };
+  if (error) return { entries: [], recentTimeWindows: [], recentDayTimeSets: [] };
   const n = normalizeJson(data?.day_remember);
-  return { entries: n.entries, recentTimeWindows: n.recentTimeWindows };
+  return { entries: n.entries, recentTimeWindows: n.recentTimeWindows, recentDayTimeSets: n.recentDayTimeSets };
 }
