@@ -331,7 +331,6 @@ export function buildTimeRememberSuggestions(
 }
 
 export function buildSetReservationSuggestions(
-  entries: DayRememberEntry[],
   recentDayTimeSets: { dow: number; startMin: number; endMin: number }[],
 ): SetReservationSuggestion[] {
   const fixed: SetReservationSuggestion[] = [
@@ -354,22 +353,6 @@ export function buildSetReservationSuggestions(
       fromHistory: true,
     });
     if (recentOut.length >= 8) break;
-  }
-  if (recentOut.length === 0) {
-    for (const e of [...entries].sort((a, b) => b.count - a.count)) {
-      const k = `${e.dow}-${e.startMin}-${e.endMin}`;
-      if (used.has(k)) continue;
-      used.add(k);
-      recentOut.push({
-        id: `fallback_${e.dow}_${e.startMin}_${e.endMin}_${recentOut.length}`,
-        label: `${WD_JA[e.dow - 1] ?? "?"}曜 ${hmLabel(e.startMin, e.endMin)}`,
-        dow: e.dow,
-        startMin: e.startMin,
-        endMin: e.endMin,
-        fromHistory: true,
-      });
-      if (recentOut.length >= 8) break;
-    }
   }
   return [...fixed, ...recentOut];
 }

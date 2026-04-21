@@ -23,7 +23,6 @@ export async function GET() {
     remembered.recentTimeWindows,
   );
   const setSuggestions = buildSetReservationSuggestions(
-    remembered.entries,
     remembered.recentDayTimeSets,
   );
 
@@ -56,7 +55,6 @@ export async function POST(request: Request) {
     remembered.recentTimeWindows,
   );
   const setSuggestions = buildSetReservationSuggestions(
-    remembered.entries,
     remembered.recentDayTimeSets,
   );
   const sorted = [...eligibleDates].sort();

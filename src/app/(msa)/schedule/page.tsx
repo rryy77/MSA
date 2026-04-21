@@ -616,40 +616,48 @@ function ScheduleWizard() {
                 </div>
               </div>
               <h2 className="mt-4 text-sm font-semibold text-zinc-100">最近のおすすめセット</h2>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {setReservationSuggestions
-                  .filter((s) => s.fromHistory)
-                  .map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => applySetSuggestion(s)}
-                      className={
-                        "rounded-lg border px-3 py-2 text-sm " +
-                        (setSuggestionIdToYmd[s.id]
-                          ? "border-amber-400 bg-amber-950/50 text-zinc-50"
-                          : "border-zinc-600 bg-zinc-900 text-zinc-200")
-                      }
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-              </div>
+              {setReservationSuggestions.filter((s) => s.fromHistory).length === 0 ? (
+                <p className="mt-2 text-xs text-zinc-500">
+                  まだありません。予定を作成していくと、直近の曜日＋時間セットがここに貯まります。
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {setReservationSuggestions
+                    .filter((s) => s.fromHistory)
+                    .map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => applySetSuggestion(s)}
+                        className={
+                          "rounded-lg border px-3 py-2 text-sm " +
+                          (setSuggestionIdToYmd[s.id]
+                            ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                            : "border-zinc-600 bg-zinc-900 text-zinc-200")
+                        }
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                </div>
+              )}
             </section>
           )}
-          <OrganizerCalendarPicker
-            eligibleYmd={eligibleSet}
-            calendarBlockedYmd={calendarBlockedYmd}
-            selectedYmd={selectedYmd}
-            onToggleYmd={toggleYmd}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            anchor={anchor}
-            onAnchorChange={setAnchor}
-            suggestions={buildMode === "select" ? suggestions : []}
-            onApplySuggestion={buildMode === "select" ? applySuggestion : undefined}
-            highlightedSuggestionRanks={highlightedSuggestionRanks}
-          />
+          {buildMode === "select" && (
+            <OrganizerCalendarPicker
+              eligibleYmd={eligibleSet}
+              calendarBlockedYmd={calendarBlockedYmd}
+              selectedYmd={selectedYmd}
+              onToggleYmd={toggleYmd}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              anchor={anchor}
+              onAnchorChange={setAnchor}
+              suggestions={suggestions}
+              onApplySuggestion={applySuggestion}
+              highlightedSuggestionRanks={highlightedSuggestionRanks}
+            />
+          )}
           <button
             type="button"
             onClick={() => void goTimes()}
