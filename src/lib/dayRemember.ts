@@ -14,7 +14,13 @@ export type DayRememberEntry = {
   count: number;
 };
 
-type DayRememberJson = { entries: DayRememberEntry[] };
+type RecentTimeWindow = {
+  startMin: number;
+  endMin: number;
+  at: string;
+};
+
+type DayRememberJson = { entries: DayRememberEntry[]; recentTimeWindows: RecentTimeWindow[] };
 
 const DEFAULT_SHAPE: Omit<DayRememberEntry, "count">[] = [
   { dow: 6, startMin: 10 * 60, endMin: 12 * 60 },
@@ -23,7 +29,7 @@ const DEFAULT_SHAPE: Omit<DayRememberEntry, "count">[] = [
 ];
 
 function emptyJson(): DayRememberJson {
-  return { entries: [] };
+  return { entries: [], recentTimeWindows: [] };
 }
 
 function entryKey(e: Pick<DayRememberEntry, "dow" | "startMin" | "endMin">): string {
@@ -64,7 +70,21 @@ function normalizeJson(raw: unknown): DayRememberJson {
       out.push({ dow, startMin, endMin, count: Math.floor(count) });
     }
   }
-  return { entries: out };
+  const recentRaw = (raw as { recentTimeWindows?: unknown }).recentTimeWindows;
+  const recentTimeWindows: RecentTimeWindow[] = [];
+  if (Array.isArray(recentRaw)) {
+    for (const row of recentRaw) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const startMin = Number(r.startMin);
+      const endMin = Number(r.endMin);
+      const at = typeof r.at === "string" ? r.at : "";
+      if (startMin >= 0 && endMin > startMin && endMin <= 24 * 60 && at) {
+        recentTimeWindows.push({ startMin, endMin, at });
+      }
+    }
+  }
+  return { entries: out, recentTimeWindows };
 }
 
 /** Google カレンダーに反映した確定枠から DAYREMEMBER を更新 */
@@ -103,7 +123,17 @@ export async function recordDayRememberSlots(userId: string, slots: Slot[]): Pro
     }
   }
 
-  j = { entries: Array.from(map.values()) };
+  const recent = [...j.recentTimeWindows];
+  for (const slot of slots) {
+    const p = slotToEntry(slot);
+    if (!p) continue;
+    const k = `${p.startMin}-${p.endMin}`;
+    const nowIso = new Date().toISOString();
+    const next = recent.filter((x) => `${x.startMin}-${x.endMin}` !== k);
+    next.unshift({ startMin: p.startMin, endMin: p.endMin, at: nowIso });
+    recent.splice(0, recent.length, ...next.slice(0, 20));
+  }
+  j = { entries: Array.from(map.values()), recentTimeWindows: recent };
 
   const { error: upErr } = await service.from("profiles").update({ day_remember: j }).eq("id", userId);
   if (upErr) {
@@ -135,7 +165,9 @@ export type DayRememberSuggestion = {
 };
 
 export type TimeRememberSuggestion = {
+  id: string;
   rank: 1 | 2 | 3;
+  slotInRank: number;
   label: string;
   startMin: number;
   endMin: number;
@@ -198,8 +230,44 @@ const TIME_FIXED: { startMin: number; endMin: number }[] = [
   { startMin: 20 * 60, endMin: 22 * 60 },
 ];
 
-/** TIMEREMEMBER: 第1は固定(9-12)、第2〜3は履歴優先（不足時は固定候補で補完） */
-export function buildTimeRememberSuggestions(entries: DayRememberEntry[]): TimeRememberSuggestion[] {
+/** TIMEREMEMBER: 第1候補は固定3つ。第2・第3は直近履歴（無ければ固定） */
+export function buildTimeRememberSuggestions(
+  entries: DayRememberEntry[],
+  recentTimeWindows: RecentTimeWindow[],
+): TimeRememberSuggestion[] {
+  const out: TimeRememberSuggestion[] = [];
+  const used = new Set<string>();
+  const push = (
+    rank: 1 | 2 | 3,
+    slotInRank: number,
+    startMin: number,
+    endMin: number,
+    fromHistory: boolean,
+  ) => {
+    const key = `${startMin}-${endMin}`;
+    used.add(key);
+    out.push({
+      id: `r${rank}_${slotInRank}_${startMin}_${endMin}`,
+      rank,
+      slotInRank,
+      label: hmLabel(startMin, endMin),
+      startMin,
+      endMin,
+      fromHistory,
+    });
+  };
+
+  push(1, 1, TIME_FIXED[0].startMin, TIME_FIXED[0].endMin, false);
+  push(1, 2, TIME_FIXED[1].startMin, TIME_FIXED[1].endMin, false);
+  push(1, 3, TIME_FIXED[2].startMin, TIME_FIXED[2].endMin, false);
+
+  const recentUnique = recentTimeWindows.filter((x) => {
+    const k = `${x.startMin}-${x.endMin}`;
+    if (used.has(k)) return false;
+    used.add(k);
+    return true;
+  });
+
   const byRange = new Map<string, { startMin: number; endMin: number; count: number }>();
   for (const e of entries) {
     const k = `${e.startMin}-${e.endMin}`;
@@ -207,46 +275,17 @@ export function buildTimeRememberSuggestions(entries: DayRememberEntry[]): TimeR
     if (prev) byRange.set(k, { ...prev, count: prev.count + e.count });
     else byRange.set(k, { startMin: e.startMin, endMin: e.endMin, count: e.count });
   }
-  const sorted = Array.from(byRange.values()).sort((a, b) => b.count - a.count);
+  const fallbackByCount = Array.from(byRange.values())
+    .sort((a, b) => b.count - a.count)
+    .filter((x) => !used.has(`${x.startMin}-${x.endMin}`));
 
-  const out: TimeRememberSuggestion[] = [
-    {
-      rank: 1,
-      label: hmLabel(TIME_FIXED[0].startMin, TIME_FIXED[0].endMin),
-      startMin: TIME_FIXED[0].startMin,
-      endMin: TIME_FIXED[0].endMin,
-      fromHistory: false,
-    },
-  ];
-  const used = new Set<string>([`${TIME_FIXED[0].startMin}-${TIME_FIXED[0].endMin}`]);
+  const rank2 = recentUnique[0] ?? fallbackByCount[0] ?? { startMin: 12 * 60 + 30, endMin: 14 * 60 + 30 };
+  push(2, 1, rank2.startMin, rank2.endMin, Boolean(recentUnique[0] ?? fallbackByCount[0]));
 
-  for (const r of sorted) {
-    if (out.length >= 3) break;
-    const k = `${r.startMin}-${r.endMin}`;
-    if (used.has(k)) continue;
-    used.add(k);
-    out.push({
-      rank: (out.length + 1) as 1 | 2 | 3,
-      label: hmLabel(r.startMin, r.endMin),
-      startMin: r.startMin,
-      endMin: r.endMin,
-      fromHistory: true,
-    });
-  }
-  for (const f of TIME_FIXED.slice(1)) {
-    if (out.length >= 3) break;
-    const k = `${f.startMin}-${f.endMin}`;
-    if (used.has(k)) continue;
-    used.add(k);
-    out.push({
-      rank: (out.length + 1) as 1 | 2 | 3,
-      label: hmLabel(f.startMin, f.endMin),
-      startMin: f.startMin,
-      endMin: f.endMin,
-      fromHistory: false,
-    });
-  }
-  return out.slice(0, 3) as TimeRememberSuggestion[];
+  const rank3 = recentUnique[1] ?? fallbackByCount[1] ?? { startMin: 22 * 60, endMin: 24 * 60 };
+  push(3, 1, rank3.startMin, rank3.endMin, Boolean(recentUnique[1] ?? fallbackByCount[1]));
+
+  return out;
 }
 
 function mondayOfWeekContainingYmd(ymd: string): DateTime {
@@ -373,13 +412,21 @@ export function firstYmdMatchingWeekdaySkippingBlocked(
 }
 
 export async function fetchDayRememberEntries(userId: string): Promise<DayRememberEntry[]> {
+  const d = await fetchDayRememberData(userId);
+  return d.entries;
+}
+
+export async function fetchDayRememberData(
+  userId: string,
+): Promise<{ entries: DayRememberEntry[]; recentTimeWindows: RecentTimeWindow[] }> {
   const service = createServiceRoleClient();
-  if (!service) return [];
+  if (!service) return { entries: [], recentTimeWindows: [] };
   const { data, error } = await service
     .from("profiles")
     .select("day_remember")
     .eq("id", userId)
     .maybeSingle();
-  if (error) return [];
-  return normalizeJson(data?.day_remember).entries;
+  if (error) return { entries: [], recentTimeWindows: [] };
+  const n = normalizeJson(data?.day_remember);
+  return { entries: n.entries, recentTimeWindows: n.recentTimeWindows };
 }

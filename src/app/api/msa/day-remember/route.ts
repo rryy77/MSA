@@ -5,7 +5,7 @@ import {
   buildDayRememberSuggestions,
   buildTimeRememberSuggestions,
   enrichDayRememberSuggestionsWithCalendar,
-  fetchDayRememberEntries,
+  fetchDayRememberData,
 } from "@/lib/dayRemember";
 import { fetchGoogleCalendarRefreshToken } from "@/lib/inviteInbox";
 import { queryPrimaryCalendarBusyMerged } from "@/lib/googleCalendarFreeBusy";
@@ -15,9 +15,12 @@ export async function GET() {
   const auth = await requireMsaOrganizer();
   if ("error" in auth) return auth.error;
 
-  const entries = await fetchDayRememberEntries(auth.ok.msa.uid);
-  const suggestions = buildDayRememberSuggestions(entries);
-  const timeSuggestions = buildTimeRememberSuggestions(entries);
+  const remembered = await fetchDayRememberData(auth.ok.msa.uid);
+  const suggestions = buildDayRememberSuggestions(remembered.entries);
+  const timeSuggestions = buildTimeRememberSuggestions(
+    remembered.entries,
+    remembered.recentTimeWindows,
+  );
 
   return NextResponse.json({ suggestions, timeSuggestions });
 }
@@ -41,9 +44,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "eligible_dates_required" }, { status: 400 });
   }
 
-  const entries = await fetchDayRememberEntries(auth.ok.msa.uid);
-  const base = buildDayRememberSuggestions(entries);
-  const timeSuggestions = buildTimeRememberSuggestions(entries);
+  const remembered = await fetchDayRememberData(auth.ok.msa.uid);
+  const base = buildDayRememberSuggestions(remembered.entries);
+  const timeSuggestions = buildTimeRememberSuggestions(
+    remembered.entries,
+    remembered.recentTimeWindows,
+  );
   const sorted = [...eligibleDates].sort();
 
   let refreshToken: string | null = null;

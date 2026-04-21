@@ -611,12 +611,12 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                       <div className="flex flex-wrap gap-2">
                         {timeSuggestions.map((s) => (
                           <button
-                            key={`tm-${ymd}-${s.rank}`}
+                            key={`tm-${ymd}-${s.id}`}
                             type="button"
                             onClick={() => applyTimeSuggestionToDate(ymd, s)}
                             className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:border-teal-500"
                           >
-                            第{s.rank}候補 {s.label}
+                            第{s.rank}候補{s.rank === 1 ? `-${s.slotInRank}` : ""} {s.label}
                           </button>
                         ))}
                       </div>
