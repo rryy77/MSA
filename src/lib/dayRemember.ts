@@ -134,6 +134,14 @@ export type DayRememberSuggestion = {
   suggestedYmd?: string;
 };
 
+export type TimeRememberSuggestion = {
+  rank: 1 | 2 | 3;
+  label: string;
+  startMin: number;
+  endMin: number;
+  fromHistory: boolean;
+};
+
 /** 第1〜第3候補（履歴が足りないときは既定の曜日・時間帯で埋める） */
 export function buildDayRememberSuggestions(entries: DayRememberEntry[]): DayRememberSuggestion[] {
   const sorted = [...entries].sort((a, b) => b.count - a.count);
@@ -173,6 +181,72 @@ export function buildDayRememberSuggestions(entries: DayRememberEntry[]): DayRem
   }
 
   return out.slice(0, 3) as DayRememberSuggestion[];
+}
+
+function hmLabel(startMin: number, endMin: number): string {
+  const sh = Math.floor(startMin / 60);
+  const sm = startMin % 60;
+  const eh = Math.floor(endMin / 60);
+  const em = endMin % 60;
+  const fmt = (h: number, m: number) => `${h}:${String(m).padStart(2, "0")}`;
+  return `${fmt(sh, sm)}〜${fmt(eh, em)}`;
+}
+
+const TIME_FIXED: { startMin: number; endMin: number }[] = [
+  { startMin: 9 * 60, endMin: 12 * 60 },
+  { startMin: 10 * 60, endMin: 12 * 60 },
+  { startMin: 20 * 60, endMin: 22 * 60 },
+];
+
+/** TIMEREMEMBER: 第1は固定(9-12)、第2〜3は履歴優先（不足時は固定候補で補完） */
+export function buildTimeRememberSuggestions(entries: DayRememberEntry[]): TimeRememberSuggestion[] {
+  const byRange = new Map<string, { startMin: number; endMin: number; count: number }>();
+  for (const e of entries) {
+    const k = `${e.startMin}-${e.endMin}`;
+    const prev = byRange.get(k);
+    if (prev) byRange.set(k, { ...prev, count: prev.count + e.count });
+    else byRange.set(k, { startMin: e.startMin, endMin: e.endMin, count: e.count });
+  }
+  const sorted = Array.from(byRange.values()).sort((a, b) => b.count - a.count);
+
+  const out: TimeRememberSuggestion[] = [
+    {
+      rank: 1,
+      label: hmLabel(TIME_FIXED[0].startMin, TIME_FIXED[0].endMin),
+      startMin: TIME_FIXED[0].startMin,
+      endMin: TIME_FIXED[0].endMin,
+      fromHistory: false,
+    },
+  ];
+  const used = new Set<string>([`${TIME_FIXED[0].startMin}-${TIME_FIXED[0].endMin}`]);
+
+  for (const r of sorted) {
+    if (out.length >= 3) break;
+    const k = `${r.startMin}-${r.endMin}`;
+    if (used.has(k)) continue;
+    used.add(k);
+    out.push({
+      rank: (out.length + 1) as 1 | 2 | 3,
+      label: hmLabel(r.startMin, r.endMin),
+      startMin: r.startMin,
+      endMin: r.endMin,
+      fromHistory: true,
+    });
+  }
+  for (const f of TIME_FIXED.slice(1)) {
+    if (out.length >= 3) break;
+    const k = `${f.startMin}-${f.endMin}`;
+    if (used.has(k)) continue;
+    used.add(k);
+    out.push({
+      rank: (out.length + 1) as 1 | 2 | 3,
+      label: hmLabel(f.startMin, f.endMin),
+      startMin: f.startMin,
+      endMin: f.endMin,
+      fromHistory: false,
+    });
+  }
+  return out.slice(0, 3) as TimeRememberSuggestion[];
 }
 
 function mondayOfWeekContainingYmd(ymd: string): DateTime {

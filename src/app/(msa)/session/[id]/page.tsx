@@ -13,6 +13,7 @@ import { TIMEZONE } from "@/lib/constants";
 import {
   firstYmdMatchingWeekdaySkippingBlocked,
   type DayRememberSuggestion,
+  type TimeRememberSuggestion,
 } from "@/lib/dayRemember";
 import { fetchGoogleCalendarBusyMerged } from "@/lib/fetchGoogleCalendarBusyRange";
 import { ymdRangeOverlapsBusy } from "@/lib/organizerBusyCheck";
@@ -120,6 +121,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
   const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
+  const [timeSuggestions, setTimeSuggestions] = useState<TimeRememberSuggestion[]>([]);
   const [calendarBusy, setCalendarBusy] = useState<{ start: string; end: string }[]>([]);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
@@ -217,6 +219,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       const dates = session?.candidateDates;
       if (!dates?.length) {
         setSuggestions([]);
+        setTimeSuggestions([]);
         return;
       }
       const dr = await fetch("/api/msa/day-remember", {
@@ -226,8 +229,12 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eligibleDates: dates }),
       });
-      const dj = (await dr.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
+      const dj = (await dr.json().catch(() => ({}))) as {
+        suggestions?: DayRememberSuggestion[];
+        timeSuggestions?: TimeRememberSuggestion[];
+      };
       setSuggestions(dj.suggestions ?? []);
+      setTimeSuggestions(dj.timeSuggestions ?? []);
     })();
   }, [session?.id, session?.status, session?.slots?.length, session?.candidateDates]);
 
@@ -366,6 +373,24 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
   async function sendInviteToB() {
     await patch({ action: "send_schedule_invite" });
+  }
+
+  function applyTimeSuggestionToDate(ymd: string, s: TimeRememberSuggestion) {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const st = `${pad(Math.floor(s.startMin / 60))}:${pad(s.startMin % 60)}`;
+    const en = `${pad(Math.floor(s.endMin / 60))}:${pad(s.endMin % 60)}`;
+    setSuggestionRankToYmd((prev) => {
+      const next = { ...prev };
+      for (const rank of [1, 2, 3] as const) {
+        if (next[rank] === ymd) delete next[rank];
+      }
+      return next;
+    });
+    setYmdSlotTimes((prev) => ({ ...prev, [ymd]: { start: st, end: en } }));
+    if (pickedDates.size <= 1) {
+      setTimeStart(st);
+      setTimeEnd(en);
+    }
   }
 
   function applySuggestionSession(s: DayRememberSuggestion) {
@@ -581,6 +606,21 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                     className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-3"
                   >
                     <span className="mb-0.5 w-full text-xs font-medium text-zinc-500 sm:w-28">{ymd}</span>
+                    <div className="w-full">
+                      <p className="mb-2 text-xs text-zinc-500">TIMEREMEMBER</p>
+                      <div className="flex flex-wrap gap-2">
+                        {timeSuggestions.map((s) => (
+                          <button
+                            key={`tm-${ymd}-${s.rank}`}
+                            type="button"
+                            onClick={() => applyTimeSuggestionToDate(ymd, s)}
+                            className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:border-teal-500"
+                          >
+                            第{s.rank}候補 {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <label className="flex flex-col gap-1 text-xs text-zinc-400">
                       開始
                       <input

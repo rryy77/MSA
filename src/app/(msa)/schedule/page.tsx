@@ -13,6 +13,7 @@ import { filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
 import {
   firstYmdMatchingWeekdaySkippingBlocked,
   type DayRememberSuggestion,
+  type TimeRememberSuggestion,
 } from "@/lib/dayRemember";
 import { getSelectableDatesJstYear } from "@/lib/dateRange";
 import { fetchGoogleCalendarBusyMerged } from "@/lib/fetchGoogleCalendarBusyRange";
@@ -47,6 +48,7 @@ function ScheduleWizard() {
   const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
   const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
+  const [timeSuggestions, setTimeSuggestions] = useState<TimeRememberSuggestion[]>([]);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   /** 30分以上の空きが無い日（Google 予定で埋まっている） */
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
@@ -130,8 +132,12 @@ function ScheduleWizard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eligibleDates }),
       });
-      const j = (await r.json().catch(() => ({}))) as { suggestions?: DayRememberSuggestion[] };
+      const j = (await r.json().catch(() => ({}))) as {
+        suggestions?: DayRememberSuggestion[];
+        timeSuggestions?: TimeRememberSuggestion[];
+      };
       setSuggestions(j.suggestions ?? []);
+      setTimeSuggestions(j.timeSuggestions ?? []);
     })();
   }, [step, eligibleDates]);
 
@@ -322,6 +328,14 @@ function ScheduleWizard() {
       ...prev,
       [ymd]: { ...prev[ymd], [field]: value },
     }));
+  }
+
+  function applyTimeSuggestionToDate(ymd: string, s: TimeRememberSuggestion) {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const st = `${pad(Math.floor(s.startMin / 60))}:${pad(s.startMin % 60)}`;
+    const en = `${pad(Math.floor(s.endMin / 60))}:${pad(s.endMin % 60)}`;
+    setRange(ymd, "start", st);
+    setRange(ymd, "end", en);
   }
 
   function firstBusyOverlap(): { ymd: string; start: string; end: string } | null {
@@ -538,6 +552,21 @@ function ScheduleWizard() {
               >
                 <p className="mb-3 text-sm font-semibold text-zinc-200">{formatYmdChip(ymd)}</p>
                 <div className="flex flex-wrap items-end gap-4">
+                  <div className="w-full">
+                    <p className="mb-2 text-xs text-zinc-500">TIMEREMEMBER</p>
+                    <div className="flex flex-wrap gap-2">
+                      {timeSuggestions.map((s) => (
+                        <button
+                          key={`tm-${ymd}-${s.rank}`}
+                          type="button"
+                          onClick={() => applyTimeSuggestionToDate(ymd, s)}
+                          className="rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:border-teal-500"
+                        >
+                          第{s.rank}候補 {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <label className="flex flex-col gap-1 text-xs text-zinc-400">
                     開始
                     <input
