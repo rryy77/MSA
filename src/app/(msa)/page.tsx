@@ -15,12 +15,16 @@ type InboxRow = {
   html_body: string;
 };
 
+type MonthStat = { month: string; count: number; hours: number };
+
 export default function MessagePage() {
   const [inbox, setInbox] = useState<InboxRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [role, setRole] = useState<"organizer" | "participant" | null>(null);
+  const [monthlyCurrent, setMonthlyCurrent] = useState<MonthStat | null>(null);
+  const [monthlyStats, setMonthlyStats] = useState<MonthStat[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -67,6 +71,22 @@ export default function MessagePage() {
         } catch {
           setInbox([]);
         }
+      }
+
+      const mr = await fetch("/api/msa/monthly-calendar-stats", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (mr.ok) {
+        const mj = (await mr.json().catch(() => ({}))) as {
+          current?: MonthStat;
+          months?: MonthStat[];
+        };
+        setMonthlyCurrent(mj.current ?? null);
+        setMonthlyStats(mj.months ?? []);
+      } else {
+        setMonthlyCurrent(null);
+        setMonthlyStats([]);
       }
 
     } catch {
@@ -178,25 +198,38 @@ export default function MessagePage() {
         )}
       </section>
 
-      {role === "organizer" && (
+      {role && (
         <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 shadow-sm ring-1 ring-zinc-800">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Link
-              href="/schedule"
-              className="flex-1 rounded-xl bg-teal-600 px-4 py-3.5 text-center text-base font-semibold text-white shadow-sm transition hover:bg-teal-500"
-            >
-              予定作成
-            </Link>
-            <Link
-              href="/schedule?view=confirm"
-              className="flex-1 rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-3.5 text-center text-base font-semibold text-zinc-100 transition hover:bg-zinc-700"
-            >
-              予定確認
-            </Link>
+          {role === "organizer" && (
+            <>
+              <div className="flex flex-col gap-3">
+                <Link
+                  href="/schedule"
+                  className="flex-1 rounded-xl bg-teal-600 px-4 py-3.5 text-center text-base font-semibold text-white shadow-sm transition hover:bg-teal-500"
+                >
+                  予定作成
+                </Link>
+              </div>
+              <p className="mt-3 text-center text-xs text-zinc-500">
+                候補作成後、B さんへはメール入力なしで送信できます。
+              </p>
+            </>
+          )}
+          <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-950/60 p-3">
+            <p className="text-xs text-zinc-500">今月の調整実績</p>
+            <p className="mt-1 text-sm font-semibold text-zinc-100">
+              回数: {monthlyCurrent?.count ?? 0} 回 / 時間: {monthlyCurrent?.hours ?? 0} 時間
+            </p>
+            {monthlyStats.length > 0 && (
+              <ul className="mt-2 space-y-1 text-xs text-zinc-400">
+                {monthlyStats.slice(0, 4).map((m) => (
+                  <li key={m.month}>
+                    {m.month}: {m.count} 回 / {m.hours} 時間
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <p className="mt-3 text-center text-xs text-zinc-500">
-            候補作成後、B さんへはメール入力なしで送信できます。
-          </p>
         </section>
       )}
 

@@ -166,6 +166,29 @@ export async function listSessionSummaries(organizerUserId?: string) {
     }));
 }
 
+export async function listSessions(organizerUserId?: string): Promise<Session[]> {
+  const service = db();
+  if (service) {
+    let q = service.from("msa_sessions").select("body");
+    if (organizerUserId) q = q.eq("organizer_user_id", organizerUserId);
+    const { data, error } = await q;
+    if (error) {
+      console.error("msa_sessions listSessions", error);
+      return [];
+    }
+    const rows = (data ?? [])
+      .map((r) => r.body as Session | null)
+      .filter((s): s is Session => Boolean(s && typeof s.id === "string"));
+    return rows.sort((a, b) => sortKeyTriggerAt(b).localeCompare(sortKeyTriggerAt(a)));
+  }
+  const all = await loadSessionsFile();
+  let rows = Object.values(all);
+  if (organizerUserId) rows = rows.filter((s) => s.organizerUserId === organizerUserId);
+  return rows
+    .filter((s) => typeof s.id === "string")
+    .sort((a, b) => sortKeyTriggerAt(b).localeCompare(sortKeyTriggerAt(a)));
+}
+
 export async function findSessionByParticipantToken(token: string): Promise<Session | undefined> {
   const service = db();
   if (service) {
