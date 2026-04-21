@@ -101,6 +101,12 @@ function messageForFailedSessionPatch(
   );
 }
 
+function confirmOverlapProceed(ymd: string, startHm: string, endHm: string): boolean {
+  return window.confirm(
+    `${ymd} ${startHm}〜${endHm} には既存の予定があります。このまま重ねて候補を作成しますか？`,
+  );
+}
+
 export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const [id, setId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -397,10 +403,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     const em = s.endMin % 60;
     const startStr = `${pad(sh)}:${pad(sm)}`;
     const endStr = `${pad(eh)}:${pad(em)}`;
-    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
-      setError(
-        "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、手動で調整してください。",
-      );
+    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy) && !confirmOverlapProceed(ymd, startStr, endStr)) {
+      setError("この候補の適用をキャンセルしました。");
       return;
     }
     setSuggestionRankToYmd((prev) => ({ ...prev, [s.rank]: ymd }));
@@ -441,10 +445,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       return { ymd, timeStart: st, timeEnd: en };
     });
     for (const it of items) {
-      if (ymdRangeOverlapsBusy(it.ymd, it.timeStart, it.timeEnd, busy)) {
-        setError(
-          `${it.ymd} の時間帯が Google カレンダーの予定と重なっています。空いている時間に変更してください。`,
-        );
+      if (ymdRangeOverlapsBusy(it.ymd, it.timeStart, it.timeEnd, busy) && !confirmOverlapProceed(it.ymd, it.timeStart, it.timeEnd)) {
+        setError("重複している予定の作成をキャンセルしました。");
         return;
       }
     }
@@ -635,7 +637,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </div>
             {timeOverlapWarning && (
                 <p className="mt-2 text-xs text-amber-300">
-                  選択中の時間帯が Google カレンダーの予定と重なっています。「候補を作成」前に調整してください。
+                  選択中の時間帯が Google カレンダーの予定と重なっています。作成時に確認ダイアログが表示されます。
                 </p>
               )}
             <button

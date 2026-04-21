@@ -26,6 +26,12 @@ function formatYmdChip(ymd: string): string {
   return `${d.month}/${d.day}（${WD_LABEL[d.weekday]}）`;
 }
 
+function confirmOverlapProceed(ymd: string, startHm: string, endHm: string): boolean {
+  return window.confirm(
+    `${formatYmdChip(ymd)} ${startHm}〜${endHm} には既存の予定があります。このまま重ねて作成しますか？`,
+  );
+}
+
 type Step = "menu" | "pickDates" | "times" | "review" | "confirm";
 
 type Summary = { id: string; status: string; triggerDateJst: string; triggerAt: string };
@@ -254,10 +260,8 @@ function ScheduleWizard() {
     const em = s.endMin % 60;
     const startStr = `${pad(sh)}:${pad(sm)}`;
     const endStr = `${pad(eh)}:${pad(em)}`;
-    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy)) {
-      setError(
-        "この候補の時間帯は Google カレンダーと重なっています。別の候補を試すか、カレンダーを調整してから手動で選んでください。",
-      );
+    if (ymdRangeOverlapsBusy(ymd, startStr, endStr, pickStepBusy) && !confirmOverlapProceed(ymd, startStr, endStr)) {
+      setError("この候補の適用をキャンセルしました。");
       return;
     }
     setSuggestionRankToYmd((prev) => ({ ...prev, [s.rank]: ymd }));
@@ -320,21 +324,21 @@ function ScheduleWizard() {
     }));
   }
 
-  function validateNoBusyOverlap(): string | null {
+  function firstBusyOverlap(): { ymd: string; start: string; end: string } | null {
     for (const ymd of concreteDates) {
       const st = times[ymd]?.start ?? "19:00";
       const en = times[ymd]?.end ?? "20:00";
       if (ymdRangeOverlapsBusy(ymd, st, en, calendarBusy)) {
-        return `${formatYmdChip(ymd)} の時間が、Google カレンダー上の予定と重なっています。空いている時間帯に変更してください。`;
+        return { ymd, start: st, end: en };
       }
     }
     return null;
   }
 
   function goReview() {
-    const v = validateNoBusyOverlap();
-    if (v) {
-      setError(v);
+    const overlap = firstBusyOverlap();
+    if (overlap && !confirmOverlapProceed(overlap.ymd, overlap.start, overlap.end)) {
+      setError("重複している予定の作成をキャンセルしました。");
       return;
     }
     setError(null);
@@ -342,9 +346,9 @@ function ScheduleWizard() {
   }
 
   async function submitWizard() {
-    const v = validateNoBusyOverlap();
-    if (v) {
-      setError(v);
+    const overlap = firstBusyOverlap();
+    if (overlap && !confirmOverlapProceed(overlap.ymd, overlap.start, overlap.end)) {
+      setError("重複している予定の作成をキャンセルしました。");
       return;
     }
     setPending(true);
