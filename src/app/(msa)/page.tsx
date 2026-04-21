@@ -4,13 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useMsaPollRefresh } from "@/hooks/useMsaPollRefresh";
 
-type Summary = {
-  id: string;
-  status: string;
-  triggerDateJst: string;
-  triggerAt: string;
-};
-
 type InboxRow = {
   id: string;
   session_id: string;
@@ -22,18 +15,7 @@ type InboxRow = {
   html_body: string;
 };
 
-const statusLabel: Record<string, string> = {
-  awaiting_organizer_round1: "主催: 候補作成・送信前",
-  awaiting_participant_availability: "参加者の回答待ち",
-  awaiting_organizer_confirm: "主催: 確定待ち",
-  awaiting_participant: "参加者の回答待ち（旧）",
-  awaiting_organizer_final: "主催: 最終（旧）",
-  participant_declined: "参加者が候補を見送り",
-  completed: "完了",
-};
-
 export default function MessagePage() {
-  const [sessions, setSessions] = useState<Summary[]>([]);
   const [inbox, setInbox] = useState<InboxRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +33,6 @@ export default function MessagePage() {
       };
       if (!me.ok || !meJ.role) {
         setRole(null);
-        setSessions([]);
         setInbox([]);
         setError("セッションを確認できません。ログインし直してください。");
         return;
@@ -88,26 +69,6 @@ export default function MessagePage() {
         }
       }
 
-      if (r === "organizer") {
-        const sr = await fetch("/api/sessions", { cache: "no-store", credentials: "include" });
-        const sJson = (await sr.json().catch(() => ({}))) as {
-          error?: string;
-          message?: string;
-          sessions?: Summary[];
-        };
-        if (!sr.ok) {
-          setSessions([]);
-          setError(
-            typeof sJson.message === "string"
-              ? sJson.message
-              : `日程一覧を読み込めません（HTTP ${sr.status}）`,
-          );
-        } else {
-          setSessions(sJson.sessions ?? []);
-        }
-      } else {
-        setSessions([]);
-      }
     } catch {
       setError("一覧を読み込めませんでした");
     } finally {
@@ -130,17 +91,7 @@ export default function MessagePage() {
         .sort()
         .join("|");
     }
-    const sessR = await fetch("/api/sessions", { cache: "no-store", credentials: "include" });
-    let sessPart = `sess:${sessR.status}`;
-    if (sessR.ok) {
-      const j = (await sessR.json().catch(() => ({}))) as { sessions?: Summary[] };
-      const sessions = j.sessions ?? [];
-      sessPart = sessions
-        .map((s) => `${s.id}:${s.status}:${s.triggerAt}`)
-        .sort()
-        .join("|");
-    }
-    return `${inboxPart}##${sessPart}`;
+    return inboxPart;
   }, []);
 
   useMsaPollRefresh(inboxSessionsFingerprint, load, {
@@ -249,35 +200,7 @@ export default function MessagePage() {
         </section>
       )}
 
-      <section>
-        <h2 className="mb-2 text-sm font-semibold text-zinc-300">
-          {role === "participant" ? "進行中の調整（参照）" : "進行中の調整（主催）"}
-        </h2>
-        {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
-        {loading ? (
-          <p className="text-sm text-zinc-500">読み込み中…</p>
-        ) : sessions.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-500">
-            {role === "participant"
-              ? "主催者の一覧は A さんの画面に表示されます。"
-              : "まだありません。「予定作成」から始めてください。"}
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {sessions.map((s) => (
-              <li key={s.id}>
-                <Link
-                  href={`/session/${s.id}`}
-                  className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 transition hover:border-teal-700 hover:bg-teal-950/40"
-                >
-                  <span className="font-medium">開始日 {s.triggerDateJst}</span>
-                  <span className="text-xs text-zinc-500">{statusLabel[s.status] ?? s.status}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {error && <p className="text-sm text-red-400">{error}</p>}
     </div>
   );
 }

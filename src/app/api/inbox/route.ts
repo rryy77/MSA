@@ -39,6 +39,7 @@ export async function GET() {
   const cfg = auth.ok.cfg;
   const uid = auth.ok.msa.uid;
   const toDelete: string[] = [];
+  const nowMs = Date.now();
 
   for (const row of items) {
     const sess = await getSession(row.session_id);
@@ -46,14 +47,19 @@ export async function GET() {
       toDelete.push(row.id);
       continue;
     }
-    if (uid === cfg.participantId && sess.status === "awaiting_participant_availability") {
+
+    /** 残すのは「B の受信トレイにある、A→B の進行中案内」のみ */
+    const keepForParticipantPending =
+      uid === cfg.participantId && sess.status === "awaiting_participant_availability";
+    if (!keepForParticipantPending) {
+      toDelete.push(row.id);
       continue;
     }
-    if (sess.status === "completed" && sess.slots?.length) {
+
+    /** 進行中であっても、候補時刻がすべて過去なら削除 */
+    if (sess.slots?.length) {
       const maxEnd = maxIsoEndFromSlots(sess.slots);
-      if (maxEnd && new Date(maxEnd).getTime() < Date.now()) {
-        toDelete.push(row.id);
-      }
+      if (maxEnd && new Date(maxEnd).getTime() < nowMs) toDelete.push(row.id);
     }
   }
 
