@@ -216,6 +216,11 @@ export type SetReservationSuggestion = {
   group?: "fixed_saturday" | "fixed";
 };
 
+export type SetModeRecommendation = {
+  startMinSuggestions: number[];
+  durationHourSuggestions: number[];
+};
+
 /** 第1〜第3候補（履歴が足りないときは既定の曜日・時間帯で埋める） */
 export function buildDayRememberSuggestions(entries: DayRememberEntry[]): DayRememberSuggestion[] {
   const sorted = [...entries].sort((a, b) => b.count - a.count);
@@ -355,6 +360,58 @@ export function buildSetReservationSuggestions(
     if (recentOut.length >= 8) break;
   }
   return [...fixed, ...recentOut];
+}
+
+/** セット予約UI向け: 開始時刻と長さのおすすめ（直近優先 + 統計補完） */
+export function buildSetModeRecommendations(
+  entries: DayRememberEntry[],
+  recentTimeWindows: { startMin: number; endMin: number }[],
+): SetModeRecommendation {
+  const startRecent: number[] = [];
+  const seenStart = new Set<number>();
+  for (const r of recentTimeWindows) {
+    const h = Math.floor(r.startMin / 60) * 60;
+    if (seenStart.has(h)) continue;
+    seenStart.add(h);
+    startRecent.push(h);
+    if (startRecent.length >= 3) break;
+  }
+  const byStart = new Map<number, number>();
+  for (const e of entries) {
+    const h = Math.floor(e.startMin / 60) * 60;
+    byStart.set(h, (byStart.get(h) ?? 0) + e.count);
+  }
+  const startByCount = Array.from(byStart.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map((x) => x[0])
+    .filter((h) => !seenStart.has(h));
+  const startMinSuggestions = [...startRecent, ...startByCount, 20 * 60, 19 * 60, 18 * 60]
+    .filter((x, i, arr) => arr.indexOf(x) === i)
+    .slice(0, 3);
+
+  const durRecent: number[] = [];
+  const seenDur = new Set<number>();
+  for (const r of recentTimeWindows) {
+    const d = Math.max(1, Math.min(3, Math.round((r.endMin - r.startMin) / 60)));
+    if (seenDur.has(d)) continue;
+    seenDur.add(d);
+    durRecent.push(d);
+    if (durRecent.length >= 3) break;
+  }
+  const byDur = new Map<number, number>();
+  for (const e of entries) {
+    const d = Math.max(1, Math.min(3, Math.round((e.endMin - e.startMin) / 60)));
+    byDur.set(d, (byDur.get(d) ?? 0) + e.count);
+  }
+  const durByCount = Array.from(byDur.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map((x) => x[0])
+    .filter((d) => !seenDur.has(d));
+  const durationHourSuggestions = [...durRecent, ...durByCount, 2, 1, 3]
+    .filter((x, i, arr) => arr.indexOf(x) === i)
+    .slice(0, 3);
+
+  return { startMinSuggestions, durationHourSuggestions };
 }
 
 function mondayOfWeekContainingYmd(ymd: string): DateTime {

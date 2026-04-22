@@ -9,11 +9,11 @@ import {
   type CalendarViewMode,
 } from "@/components/msa/OrganizerCalendarPicker";
 import { TIMEZONE } from "@/lib/constants";
-import { filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
+import { busyMinutesOnDayJst, filterYmdWithNoFreeWindow } from "@/lib/calendarFreeWindows";
 import {
   firstYmdMatchingWeekdaySkippingBlocked,
   type DayRememberSuggestion,
-  type SetReservationSuggestion,
+  type SetModeRecommendation,
   type TimeRememberSuggestion,
 } from "@/lib/dayRemember";
 import { getSelectableDatesJstYear } from "@/lib/dateRange";
@@ -26,6 +26,12 @@ function formatYmdChip(ymd: string): string {
   const d = DateTime.fromISO(ymd, { zone: TIMEZONE });
   if (!d.isValid) return ymd;
   return `${d.month}/${d.day}（${WD_LABEL[d.weekday]}）`;
+}
+
+function hmFromMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function confirmOverlapProceed(ymd: string, startHm: string, endHm: string): boolean {
@@ -49,7 +55,12 @@ function ScheduleWizard() {
   const [anchor, setAnchor] = useState(() => DateTime.now().setZone(TIMEZONE).startOf("day"));
   const [suggestions, setSuggestions] = useState<DayRememberSuggestion[]>([]);
   const [timeSuggestions, setTimeSuggestions] = useState<TimeRememberSuggestion[]>([]);
-  const [setReservationSuggestions, setSetSuggestions] = useState<SetReservationSuggestion[]>([]);
+  const [setModeRecommend, setSetModeRecommend] = useState<SetModeRecommendation>({
+    startMinSuggestions: [20 * 60, 19 * 60, 18 * 60],
+    durationHourSuggestions: [2, 1, 3],
+  });
+  const [setStartMin, setSetStartMin] = useState(20 * 60);
+  const [setDurationHour, setSetDurationHour] = useState<1 | 2 | 3>(2);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   /** 30分以上の空きが無い日（Google 予定で埋まっている） */
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
@@ -60,7 +71,6 @@ function ScheduleWizard() {
   const [suggestionRankToYmd, setSuggestionRankToYmd] = useState<Partial<Record<1 | 2 | 3, string>>>(
     {},
   );
-  const [setSuggestionIdToYmd, setSetSuggestionIdToYmd] = useState<Record<string, string>>({});
 
   const highlightedSuggestionRanks = useMemo(
     () => new Set(([1, 2, 3] as const).filter((r) => Boolean(suggestionRankToYmd[r]))),
@@ -108,11 +118,18 @@ function ScheduleWizard() {
       const j = (await r.json().catch(() => ({}))) as {
         suggestions?: DayRememberSuggestion[];
         timeSuggestions?: TimeRememberSuggestion[];
-        setSuggestions?: SetReservationSuggestion[];
+        setMode?: SetModeRecommendation;
       };
       setSuggestions(j.suggestions ?? []);
       setTimeSuggestions(j.timeSuggestions ?? []);
-      setSetSuggestions(j.setSuggestions ?? []);
+      if (j.setMode) {
+        setSetModeRecommend(j.setMode);
+        if (j.setMode.startMinSuggestions.length > 0) setSetStartMin(j.setMode.startMinSuggestions[0]);
+        if (j.setMode.durationHourSuggestions.length > 0) {
+          const d = j.setMode.durationHourSuggestions[0];
+          setSetDurationHour((d >= 1 && d <= 3 ? d : 2) as 1 | 2 | 3);
+        }
+      }
     })();
   }, [step, eligibleDates]);
 
@@ -182,13 +199,6 @@ function ScheduleWizard() {
           const { [ymd]: _, ...rest } = t;
           return rest;
         });
-        setSetSuggestionIdToYmd((prev) => {
-          const next = { ...prev };
-          for (const k of Object.keys(next)) {
-            if (next[k] === ymd) delete next[k];
-          }
-          return next;
-        });
       } else {
         n.add(ymd);
       }
@@ -211,7 +221,6 @@ function ScheduleWizard() {
     setBuildMode(mode);
     setSelectedYmd(new Set());
     setSuggestionRankToYmd({});
-    setSetSuggestionIdToYmd({});
     setStep("pickDates");
   }
 
@@ -263,40 +272,6 @@ function ScheduleWizard() {
     setError(null);
   }
 
-  function applySetSuggestion(s: SetReservationSuggestion) {
-    const current = setSuggestionIdToYmd[s.id];
-    if (current) {
-      setSetSuggestionIdToYmd((prev) => {
-        const next = { ...prev };
-        delete next[s.id];
-        return next;
-      });
-      setSelectedYmd((prev) => {
-        const n = new Set(prev);
-        n.delete(current);
-        return n;
-      });
-      setTimes((prev) => {
-        const { [current]: _, ...rest } = prev;
-        return rest;
-      });
-      return;
-    }
-    const sorted = [...eligibleDates].sort();
-    const ymd = firstYmdMatchingWeekdaySkippingBlocked(sorted, s.dow, calendarBlockedYmd);
-    if (!ymd) {
-      setError("この曜日で選べる空き日がありません。");
-      return;
-    }
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const st = `${pad(Math.floor(s.startMin / 60))}:${pad(s.startMin % 60)}`;
-    const en = `${pad(Math.floor(s.endMin / 60))}:${pad(s.endMin % 60)}`;
-    setSetSuggestionIdToYmd((prev) => ({ ...prev, [s.id]: ymd }));
-    setSelectedYmd((prev) => new Set(prev).add(ymd));
-    setTimes((prev) => ({ ...prev, [ymd]: { start: st, end: en } }));
-    setError(null);
-  }
-
   async function goTimes() {
     if (selectedYmd.size === 0) {
       setError("日付を1つ以上選んでください");
@@ -305,11 +280,13 @@ function ScheduleWizard() {
     setError(null);
     const dates = Array.from(selectedYmd).sort();
     if (buildMode === "set") {
+      const st = hmFromMin(setStartMin);
+      const en = hmFromMin(setStartMin + setDurationHour * 60);
       setConcreteDates(dates);
       setTimes((prev) => {
         const next = { ...prev };
         for (const ymd of dates) {
-          if (!next[ymd]) next[ymd] = { start: "19:00", end: "20:00" };
+          next[ymd] = { start: st, end: en };
         }
         return next;
       });
@@ -369,10 +346,11 @@ function ScheduleWizard() {
   }
 
   function firstBusyOverlap(): { ymd: string; start: string; end: string } | null {
+    const busyRef = calendarBusy.length > 0 ? calendarBusy : pickStepBusy;
     for (const ymd of concreteDates) {
       const st = times[ymd]?.start ?? "19:00";
       const en = times[ymd]?.end ?? "20:00";
-      if (ymdRangeOverlapsBusy(ymd, st, en, calendarBusy)) {
+      if (ymdRangeOverlapsBusy(ymd, st, en, busyRef)) {
         return { ymd, start: st, end: en };
       }
     }
@@ -448,6 +426,27 @@ function ScheduleWizard() {
     );
   }
 
+  const setMonthGrid = useMemo(() => {
+    const a = anchor.setZone(TIMEZONE).startOf("month");
+    const firstDow = a.weekday;
+    const pad = firstDow === 7 ? 6 : firstDow - 1;
+    const start = a.minus({ days: pad });
+    const cells: DateTime[] = [];
+    for (let i = 0; i < 42; i++) cells.push(start.plus({ days: i }));
+    return { monthLabel: a.toFormat("y年M月"), cells };
+  }, [anchor]);
+  const setStartHm = hmFromMin(setStartMin);
+  const setEndHm = hmFromMin(setStartMin + setDurationHour * 60);
+  const maxStartMin = (24 - setDurationHour) * 60;
+  const allStartOptions = useMemo(() => {
+    const out: number[] = [];
+    for (let h = 7; h <= 22; h++) out.push(h * 60);
+    return out;
+  }, []);
+  useEffect(() => {
+    if (setStartMin > maxStartMin) setSetStartMin(maxStartMin);
+  }, [maxStartMin, setStartMin]);
+
   return (
     <div className="flex flex-1 flex-col gap-5 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
       <Link href="/" className="text-sm text-sky-400 hover:underline">
@@ -510,74 +509,119 @@ function ScheduleWizard() {
           {error && <p className="text-sm text-red-400">{error}</p>}
           {buildMode === "set" && (
             <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 ring-1 ring-zinc-800">
-              <h2 className="text-sm font-semibold text-zinc-100">固定セット</h2>
-              <div className="mt-3 flex flex-col gap-2">
-                {setReservationSuggestions
-                  .filter((s) => !s.fromHistory && s.group !== "fixed_saturday")
-                  .map((s) => (
+              <h2 className="text-sm font-semibold text-zinc-100">1) 開始時間を選ぶ</h2>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {setModeRecommend.startMinSuggestions.map((m) => (
+                  <button
+                    key={`rec-start-${m}`}
+                    type="button"
+                    onClick={() => setSetStartMin(m)}
+                    className={
+                      "rounded-lg border px-3 py-2 text-sm " +
+                      (setStartMin === m
+                        ? "border-teal-400 bg-teal-950/50 text-teal-100"
+                        : "border-zinc-600 bg-zinc-900 text-zinc-200")
+                    }
+                  >
+                    おすすめ {hmFromMin(m)}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {allStartOptions.filter((m) => m <= maxStartMin).map((m) => (
+                  <button
+                    key={`all-start-${m}`}
+                    type="button"
+                    onClick={() => setSetStartMin(m)}
+                    className={
+                      "rounded-lg border px-3 py-2 text-sm " +
+                      (setStartMin === m
+                        ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                        : "border-zinc-700 bg-zinc-950 text-zinc-300")
+                    }
+                  >
+                    {hmFromMin(m)}
+                  </button>
+                ))}
+              </div>
+
+              <h2 className="mt-4 text-sm font-semibold text-zinc-100">2) 長さを選ぶ</h2>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[1, 2, 3].map((h) => (
+                  <button
+                    key={`dur-${h}`}
+                    type="button"
+                    onClick={() => setSetDurationHour(h as 1 | 2 | 3)}
+                    className={
+                      "rounded-lg border px-4 py-2 text-sm " +
+                      (setDurationHour === h
+                        ? "border-amber-400 bg-amber-950/50 text-zinc-50"
+                        : "border-zinc-700 bg-zinc-950 text-zinc-300")
+                    }
+                  >
+                    {h}時間
+                    {setModeRecommend.durationHourSuggestions.includes(h) ? "（おすすめ）" : ""}
+                  </button>
+                ))}
+              </div>
+
+              <h2 className="mt-4 text-sm font-semibold text-zinc-100">3) カレンダーで日付を選ぶ</h2>
+              <p className="mt-1 text-xs text-zinc-500">条件: {setStartHm}〜{setEndHm}（複数日選択可）</p>
+              <div className="mt-2 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setAnchor(anchor.minus({ months: 1 }))}
+                  className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-300"
+                >
+                  ‹
+                </button>
+                <span className="text-sm text-zinc-200">{setMonthGrid.monthLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => setAnchor(anchor.plus({ months: 1 }))}
+                  className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-300"
+                >
+                  ›
+                </button>
+              </div>
+              <div className="mt-2 grid grid-cols-7 gap-1 text-[10px] text-zinc-500">
+                {["月", "火", "水", "木", "金", "土", "日"].map((w) => (
+                  <div key={`h-${w}`} className="py-1 text-center">{w}</div>
+                ))}
+                {setMonthGrid.cells.map((d) => {
+                  const ymd = d.toISODate()!;
+                  const inMonth = d.month === anchor.month;
+                  const inEligible = eligibleSet.has(ymd);
+                  const blocked = calendarBlockedYmd.has(ymd);
+                  const overlap = ymdRangeOverlapsBusy(ymd, setStartHm, setEndHm, pickStepBusy);
+                  const busyMin = busyMinutesOnDayJst(ymd, pickStepBusy);
+                  const symbol = !inMonth || !inEligible || blocked ? "×" : overlap ? "△" : busyMin === 0 ? "◎" : "○";
+                  const canTap = inMonth && inEligible && !blocked;
+                  const selected = selectedYmd.has(ymd);
+                  return (
                     <button
-                      key={s.id}
+                      key={`set-${ymd}`}
                       type="button"
-                      onClick={() => applySetSuggestion(s)}
+                      disabled={!canTap}
+                      onClick={() => canTap && toggleYmd(ymd)}
                       className={
-                        "rounded-xl border px-4 py-3 text-left text-base " +
-                        (setSuggestionIdToYmd[s.id]
-                          ? "border-amber-400 bg-amber-950/50 text-zinc-50"
-                          : "border-zinc-600 bg-zinc-950 text-zinc-200")
+                        "relative flex h-12 items-center justify-center rounded-lg border text-sm " +
+                        (!inMonth
+                          ? "border-transparent text-zinc-700 opacity-40"
+                          : !inEligible || blocked
+                            ? "border-zinc-800 bg-zinc-950/40 text-zinc-600"
+                            : selected
+                              ? "border-teal-400 bg-teal-950/40 text-zinc-50"
+                              : "border-zinc-700 bg-zinc-900 text-zinc-200")
                       }
                     >
-                      {s.label}
+                      <span>{d.day}</span>
+                      <span className="absolute right-1 top-1 text-[10px]">{symbol}</span>
                     </button>
-                  ))}
-                <div className="rounded-xl border border-zinc-700 bg-zinc-950/60 p-2">
-                  <p className="mb-2 text-xs text-zinc-500">土曜日（2つ選択可）</p>
-                  <div className="flex flex-wrap gap-2">
-                    {setReservationSuggestions
-                      .filter((s) => s.group === "fixed_saturday")
-                      .map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => applySetSuggestion(s)}
-                          className={
-                            "rounded-lg border px-4 py-3 text-base " +
-                            (setSuggestionIdToYmd[s.id]
-                              ? "border-amber-400 bg-amber-950/50 text-zinc-50"
-                              : "border-zinc-600 bg-zinc-900 text-zinc-200")
-                          }
-                        >
-                          {s.label}
-                        </button>
-                      ))}
-                  </div>
-                </div>
+                  );
+                })}
               </div>
-              <h2 className="mt-4 text-sm font-semibold text-zinc-100">最近のおすすめセット</h2>
-              {setReservationSuggestions.filter((s) => s.fromHistory).length === 0 ? (
-                <p className="mt-2 text-xs text-zinc-500">
-                  まだありません。予定を作成していくと、直近の曜日＋時間セットがここに貯まります。
-                </p>
-              ) : (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {setReservationSuggestions
-                    .filter((s) => s.fromHistory)
-                    .map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => applySetSuggestion(s)}
-                        className={
-                          "rounded-lg border px-4 py-3 text-base " +
-                          (setSuggestionIdToYmd[s.id]
-                            ? "border-amber-400 bg-amber-950/50 text-zinc-50"
-                            : "border-zinc-600 bg-zinc-900 text-zinc-200")
-                        }
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                </div>
-              )}
+              <p className="mt-2 text-[11px] text-zinc-500">◎ 空き十分 / ○ 選択可能 / △ 一部重なり（確認あり） / × 選択不可</p>
             </section>
           )}
           {buildMode === "select" && (

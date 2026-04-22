@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { TIMEZONE } from "@/lib/constants";
 import {
   buildDayRememberSuggestions,
+  buildSetModeRecommendations,
   buildSetReservationSuggestions,
   buildTimeRememberSuggestions,
   enrichDayRememberSuggestionsWithCalendar,
@@ -25,8 +26,9 @@ export async function GET() {
   const setSuggestions = buildSetReservationSuggestions(
     remembered.recentDayTimeSets,
   );
+  const setMode = buildSetModeRecommendations(remembered.entries, remembered.recentTimeWindows);
 
-  return NextResponse.json({ suggestions, timeSuggestions, setSuggestions });
+  return NextResponse.json({ suggestions, timeSuggestions, setSuggestions, setMode });
 }
 
 export async function POST(request: Request) {
@@ -57,6 +59,7 @@ export async function POST(request: Request) {
   const setSuggestions = buildSetReservationSuggestions(
     remembered.recentDayTimeSets,
   );
+  const setMode = buildSetModeRecommendations(remembered.entries, remembered.recentTimeWindows);
   const sorted = [...eligibleDates].sort();
 
   let refreshToken: string | null = null;
@@ -68,7 +71,7 @@ export async function POST(request: Request) {
   }
 
   if (!refreshToken) {
-    return NextResponse.json({ suggestions: base, timeSuggestions, setSuggestions, calendarSkipped: true });
+    return NextResponse.json({ suggestions: base, timeSuggestions, setSuggestions, setMode, calendarSkipped: true });
   }
 
   try {
@@ -76,9 +79,9 @@ export async function POST(request: Request) {
     const to = DateTime.fromISO(sorted[sorted.length - 1], { zone: TIMEZONE }).endOf("day").toISO()!;
     const busy = await queryPrimaryCalendarBusyMerged(refreshToken, from, to);
     const suggestions = enrichDayRememberSuggestionsWithCalendar(base, busy, sorted);
-    return NextResponse.json({ suggestions, timeSuggestions, setSuggestions });
+    return NextResponse.json({ suggestions, timeSuggestions, setSuggestions, setMode });
   } catch (e) {
     console.error("day-remember enrich", e);
-    return NextResponse.json({ suggestions: base, timeSuggestions, setSuggestions, calendarSkipped: true });
+    return NextResponse.json({ suggestions: base, timeSuggestions, setSuggestions, setMode, calendarSkipped: true });
   }
 }
