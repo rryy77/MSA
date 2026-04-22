@@ -517,8 +517,11 @@ function ScheduleWizard() {
           {buildMode === "set" && (
             <section className="rounded-2xl border border-zinc-700 bg-zinc-900/80 p-4 ring-1 ring-zinc-800">
               <h2 className="text-sm font-semibold text-zinc-100">1) 開始時間を選ぶ</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                おすすめは、直近で確定した予定の開始時間から自動で表示しています。
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {setModeRecommend.startMinSuggestions.map((m) => (
+                {setModeRecommend.startMinSuggestions.map((m, i) => (
                   <button
                     key={`rec-start-${m}`}
                     type="button"
@@ -530,7 +533,7 @@ function ScheduleWizard() {
                         : "border-zinc-600 bg-zinc-900 text-zinc-200")
                     }
                   >
-                    おすすめ {hmFromMin(m)}
+                    おすすめ{i + 1}（直近） {hmFromMin(m)}
                   </button>
                 ))}
               </div>
@@ -553,6 +556,9 @@ function ScheduleWizard() {
               </div>
 
               <h2 className="mt-4 text-sm font-semibold text-zinc-100">2) 長さを選ぶ</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                1〜3時間は基本候補です。「おすすめ」は直近の利用傾向を反映しています。
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {[1, 2, 3].map((h) => (
                   <button
@@ -567,7 +573,7 @@ function ScheduleWizard() {
                     }
                   >
                     {h}時間
-                    {setModeRecommend.durationHourSuggestions.includes(h) ? "（おすすめ）" : ""}
+                    {setModeRecommend.durationHourSuggestions.includes(h) ? "（おすすめ・直近）" : ""}
                   </button>
                 ))}
               </div>
