@@ -387,7 +387,8 @@ export function buildSetModeRecommendations(
     .filter((h) => !seenStart.has(h));
   const startMinSuggestions = [...startRecent, ...startByCount, 20 * 60, 19 * 60, 18 * 60]
     .filter((x, i, arr) => arr.indexOf(x) === i)
-    .slice(0, 3);
+    .slice(0, 3)
+    .sort((a, b) => a - b);
 
   const durRecent: number[] = [];
   const seenDur = new Set<number>();
