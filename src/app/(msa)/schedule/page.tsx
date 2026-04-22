@@ -34,6 +34,14 @@ function hmFromMin(min: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+function durationLabelFromMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (m === 0) return `${h}時間`;
+  if (h === 0) return `${m}分`;
+  return `${h}時間${m}分`;
+}
+
 function confirmOverlapProceed(ymd: string, startHm: string, endHm: string): boolean {
   return window.confirm(
     `${formatYmdChip(ymd)} ${startHm}〜${endHm} には既存の予定があります。このまま重ねて作成しますか？`,
@@ -60,7 +68,7 @@ function ScheduleWizard() {
     durationHourSuggestions: [2, 1, 3],
   });
   const [setStartMin, setSetStartMin] = useState(20 * 60);
-  const [setDurationHour, setSetDurationHour] = useState<1 | 2 | 3>(2);
+  const [setDurationMin, setSetDurationMin] = useState(120);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   /** 30分以上の空きが無い日（Google 予定で埋まっている） */
   const [calendarBlockedYmd, setCalendarBlockedYmd] = useState<Set<string>>(new Set());
@@ -127,7 +135,7 @@ function ScheduleWizard() {
         if (j.setMode.startMinSuggestions.length > 0) setSetStartMin(j.setMode.startMinSuggestions[0]);
         if (j.setMode.durationHourSuggestions.length > 0) {
           const d = j.setMode.durationHourSuggestions[0];
-          setSetDurationHour((d >= 1 && d <= 3 ? d : 2) as 1 | 2 | 3);
+          setSetDurationMin((d >= 1 && d <= 3 ? d : 2) * 60);
         }
       }
     })();
@@ -281,7 +289,7 @@ function ScheduleWizard() {
     const dates = Array.from(selectedYmd).sort();
     if (buildMode === "set") {
       const st = hmFromMin(setStartMin);
-      const en = hmFromMin(setStartMin + setDurationHour * 60);
+      const en = hmFromMin(setStartMin + setDurationMin);
       setConcreteDates(dates);
       setTimes((prev) => {
         const next = { ...prev };
@@ -436,8 +444,8 @@ function ScheduleWizard() {
     return { monthLabel: a.toFormat("y年M月"), cells };
   }, [anchor]);
   const setStartHm = hmFromMin(setStartMin);
-  const setEndHm = hmFromMin(setStartMin + setDurationHour * 60);
-  const maxStartMin = (24 - setDurationHour) * 60;
+  const setEndHm = hmFromMin(setStartMin + setDurationMin);
+  const maxStartMin = 24 * 60 - setDurationMin;
   const allStartOptions = useMemo(() => {
     const out: number[] = [];
     for (let h = 7; h <= 22; h++) out.push(h * 60);
@@ -551,10 +559,10 @@ function ScheduleWizard() {
                   <button
                     key={`dur-${h}`}
                     type="button"
-                    onClick={() => setSetDurationHour(h as 1 | 2 | 3)}
+                    onClick={() => setSetDurationMin(h * 60)}
                     className={
                       "rounded-lg border px-4 py-2 text-sm " +
-                      (setDurationHour === h
+                      (setDurationMin === h * 60
                         ? "border-amber-400 bg-amber-950/50 text-zinc-50"
                         : "border-zinc-700 bg-zinc-950 text-zinc-300")
                     }
@@ -564,9 +572,31 @@ function ScheduleWizard() {
                   </button>
                 ))}
               </div>
+              <details className="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/60 p-3">
+                <summary className="cursor-pointer text-xs text-zinc-400">詳細な長さを選ぶ（30分刻み）</summary>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[30, 60, 90, 120, 150, 180, 210, 240, 300, 360].map((m) => (
+                    <button
+                      key={`dur-min-${m}`}
+                      type="button"
+                      onClick={() => setSetDurationMin(m)}
+                      className={
+                        "rounded-lg border px-3 py-2 text-xs " +
+                        (setDurationMin === m
+                          ? "border-teal-400 bg-teal-950/40 text-teal-100"
+                          : "border-zinc-700 bg-zinc-900 text-zinc-300")
+                      }
+                    >
+                      {durationLabelFromMin(m)}
+                    </button>
+                  ))}
+                </div>
+              </details>
 
               <h2 className="mt-4 text-sm font-semibold text-zinc-100">3) カレンダーで日付を選ぶ</h2>
-              <p className="mt-1 text-xs text-zinc-500">条件: {setStartHm}〜{setEndHm}（複数日選択可）</p>
+              <p className="mt-1 text-xs text-zinc-500">
+                条件: {setStartHm}〜{setEndHm}（{durationLabelFromMin(setDurationMin)} / 複数日選択可）
+              </p>
               <div className="mt-2 flex items-center justify-between">
                 <button
                   type="button"
