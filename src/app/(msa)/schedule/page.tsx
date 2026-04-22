@@ -506,10 +506,9 @@ function ScheduleWizard() {
             </button>
           </header>
           <p className="text-sm text-zinc-400">
-            開始日を含む<strong className="text-zinc-200">1年分</strong>
-            から選べます。Google カレンダーに予定があり、
-            <strong className="text-zinc-200">30分以上の連続空きが無い日</strong>
-            はオレンジ色で選べません。
+            {buildMode === "set"
+              ? "開始時間・長さを決めて、カレンダーで日付を複数選んでください。"
+              : "日付を選んでから時間を設定してください。"}
           </p>
           {busyPickLoading && (
             <p className="text-xs text-zinc-500">Google カレンダーの空き状況を取得しています…</p>
